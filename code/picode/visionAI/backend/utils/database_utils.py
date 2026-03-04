@@ -1,6 +1,5 @@
 from config.init_config import get_config, DEBUG_COLOR, ERROR_COLOR
 from termcolor import colored
-from arango import ArangoClient, exceptions
 from typing import Optional, List
 
 db = None  # Wrapper for the Arango database
@@ -10,6 +9,13 @@ NOTES_COLLECTION_NAME = "notes"
 
 def setup(notes_collection_name=None):
     global db, NOTES_COLLECTION_NAME
+
+    try:
+        from arango import ArangoClient, exceptions  # type: ignore
+    except Exception as e:
+        print("\nArangoDB client not available, skipping DB setup:")
+        print(" -", e)
+        raise
 
     # Set the collection names
     if notes_collection_name is not None:
@@ -119,6 +125,6 @@ def delete_note(note_id) -> bool:
     try:
         db.collection(NOTES_COLLECTION_NAME).delete(note_id)
         return True
-    except exceptions.DocumentDeleteError:
+    except Exception:
         # The note doesn't exist
         return False
