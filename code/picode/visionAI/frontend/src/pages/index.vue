@@ -31,6 +31,8 @@
 </template>
 
 <script>
+import axios from "axios";
+
 export default {
   name: "HomePage",
   data() {
@@ -41,8 +43,15 @@ export default {
   },
   methods: {
     toggleCamera() {
-      this.showCamera = !this.showCamera;
+      const nextState = !this.showCamera;
+      this.showCamera = nextState;
       this.cameraKey++;
+
+      axios
+        .post("/api/arduino/servo", { enabled: nextState })
+        .catch((error) => {
+          console.error("Failed to toggle Arduino servo", error);
+        });
     },
   },
   computed: {
