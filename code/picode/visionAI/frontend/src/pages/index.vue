@@ -2,6 +2,7 @@
 <template>
   <v-container
     style="
+      position: relative;
       max-width: 1000px;
       min-height: calc(100vh - 120px);
       display: flex;
@@ -11,6 +12,19 @@
       gap: 16px;
     "
   >
+    <!-- Back button -->
+    <v-btn
+      v-if="step > 0"
+      icon="mdi-arrow-left"
+      variant="text"
+      style="
+        position: absolute;
+        top: 70px;
+        left: 20px;
+      "
+      @click="goBack"
+    />
+
     <!-- STEP 0: Start -->
     <template v-if="step === 0">
       <v-btn color="primary" @click="startFlow">
@@ -52,7 +66,7 @@
 
       <transition name="fade">
         <v-btn
-          v-if="showScan"
+          v-if="showScan && !showCamera"
           prepend-icon="mdi-video"
           color="primary"
           @click="startScan"
@@ -61,7 +75,6 @@
         </v-btn>
       </transition>
 
-      <!-- Camera stream (jouw originele code, enkel getoond als showCamera=true) -->
       <img
         v-if="showCamera"
         :key="cameraKey"
@@ -75,7 +88,10 @@
         "
       />
 
-      <!-- optioneel: stop-knop tonen zodra camera aan staat -->
+      <div v-if="showCamera" style="font-size: 16px; opacity: 0.8;">
+        Zoeken naar imei barcode...
+      </div>
+
       <v-btn
         v-if="showCamera"
         color="secondary"
@@ -84,6 +100,17 @@
       >
         Stop camera
       </v-btn>
+    </template>
+
+    <!-- STEP 4: IMEI gevonden -->
+    <template v-else-if="step === 4">
+      <div style="text-align: center; font-size: 24px; max-width: 800px;">
+        dit is jouw imei nummer:
+      </div>
+
+      <div style="text-align: center; font-size: 32px; font-weight: bold;">
+        {{ imeiNumber }}
+      </div>
     </template>
   </v-container>
 </template>
@@ -95,25 +122,24 @@ export default {
   name: "HomePage",
   data() {
     return {
-      // flow state
       step: 0,
       showOk: false,
       showScan: false,
       timer: null,
 
-      // camera state (jouw originele)
       showCamera: false,
       cameraKey: 0,
+
+      imeiNumber: "",
+      scanInterval: null,
     };
   },
   computed: {
     cameraStreamUrl() {
-      // `/api` is proxied to the backend by Vite in development.
       return `/api/camera/stream?t=${this.cameraKey}`;
     },
   },
   methods: {
-    // ---- Flow ----
     startFlow() {
       this.step = 1;
       this.showOk = false;
@@ -124,17 +150,13 @@ export default {
     nextStep() {
       this.showOk = false;
       this.showScan = false;
-
-      // ga naar volgende stap
       this.step += 1;
 
-      // stap 2: opnieuw ok na 3s
       if (this.step === 2) {
         this.startOkTimer();
         return;
       }
 
-      // stap 3: scan knop na 3s
       if (this.step === 3) {
         this.startScanTimer();
         return;
@@ -145,27 +167,82 @@ export default {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         this.showOk = true;
-      }, 3000);
+      }, 1000);
     },
 
     startScanTimer() {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         this.showScan = true;
-      }, 3000);
+      }, 1000);
     },
 
-    // ---- Camera (merged from your current code) ----
-    startScan() {
-      // enkel starten als hij nog niet aan staat
+    async startScan() {
       if (!this.showCamera) {
         this.toggleCamera(true);
       }
+
+      this.startImeiDetection();
     },
 
     stopScan() {
+      this.stopImeiDetection();
+
       if (this.showCamera) {
         this.toggleCamera(false);
+      }
+    },
+
+    startImeiDetection() {
+      this.stopImeiDetection();
+
+      this.scanInterval = setInterval(async () => {
+        try {
+          const response = await axios.get("/api/imei/detect");
+          if (response.data?.found && response.data?.imei) {
+            this.imeiNumber = response.data.imei;
+            this.stopImeiDetection();
+
+            if (this.showCamera) {
+              this.toggleCamera(false);
+            }
+
+            this.step = 4;
+          }
+        } catch (error) {
+          console.error("Failed to detect IMEI", error);
+        }
+      }, 800);
+    },
+
+    stopImeiDetection() {
+      if (this.scanInterval) {
+        clearInterval(this.scanInterval);
+        this.scanInterval = null;
+      }
+    },
+
+    goBack() {
+      clearTimeout(this.timer);
+      this.stopImeiDetection();
+
+      if (this.showCamera) {
+        this.stopScan();
+      }
+
+      if (this.step > 0) {
+        this.step -= 1;
+      }
+
+      this.showOk = false;
+      this.showScan = false;
+
+      if (this.step === 1 || this.step === 2) {
+        this.startOkTimer();
+      }
+
+      if (this.step === 3) {
+        this.startScanTimer();
       }
     },
 
@@ -185,6 +262,7 @@ export default {
   },
   beforeUnmount() {
     clearTimeout(this.timer);
+    this.stopImeiDetection();
   },
 };
 </script>
