@@ -226,9 +226,9 @@ export default {
       clearTimeout(this.timer);
       this.stopImeiDetection();
 
-      if (this.showCamera) {
-        this.stopScan();
-      }
+      this.stopScan();
+      this.showCamera = false;
+      this.cameraKey++;
 
       if (this.step > 0) {
         this.step -= 1;
@@ -243,6 +243,7 @@ export default {
 
       if (this.step === 3) {
         this.startScanTimer();
+        return;
       }
     },
 
