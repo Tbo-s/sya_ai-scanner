@@ -1,4 +1,8 @@
+
+
 <!-- HomePage -->
+
+
 <template>
   <v-container
     style="
@@ -117,6 +121,7 @@
 
 <script>
 import axios from "axios";
+import { nextTick } from "vue";
 
 export default {
   name: "HomePage",
@@ -178,20 +183,31 @@ export default {
     },
 
     async startScan() {
-      if (!this.showCamera) {
-        this.toggleCamera(true);
-      }
+  this.stopImeiDetection();
 
-      this.startImeiDetection();
-    },
+  // forceer volledige reset van oude stream
+  this.showCamera = false;
+  this.cameraKey = Date.now();
 
-    stopScan() {
-      this.stopImeiDetection();
+  await nextTick();
 
-      if (this.showCamera) {
-        this.toggleCamera(false);
-      }
-    },
+  this.toggleCamera(true);
+  this.startImeiDetection();
+},
+
+async stopScan() {
+  this.stopImeiDetection();
+
+  if (this.showCamera) {
+    this.toggleCamera(false);
+  }
+
+  // forceer img echt weg
+  this.showCamera = false;
+  this.cameraKey = Date.now();
+
+  await nextTick();
+},
 
     startImeiDetection() {
       this.stopImeiDetection();
@@ -203,9 +219,7 @@ export default {
             this.imeiNumber = response.data.imei;
             this.stopImeiDetection();
 
-            if (this.showCamera) {
-              this.toggleCamera(false);
-            }
+            await this.stopScan();
 
             this.step = 4;
           }
@@ -222,13 +236,11 @@ export default {
       }
     },
 
-    goBack() {
+    async goBack() {
       clearTimeout(this.timer);
       this.stopImeiDetection();
 
-      this.stopScan();
-      this.showCamera = false;
-      this.cameraKey++;
+      await this.stopScan();
 
       if (this.step > 0) {
         this.step -= 1;
