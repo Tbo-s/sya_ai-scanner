@@ -21,10 +21,15 @@ class GrblCommand(BaseModel):
     wait_for_ok: bool = True
 
 
+class GateCommand(BaseModel):
+    command: str = Field(min_length=1)
+
+
 GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
 ARDUINO_USB_VIDS = {0x2341, 0x2A03}
 ARDUINO_LEONARDO_PIDS = {0x0036, 0x8036}
 ARDUINO_MEGA_PIDS = {0x0010, 0x0042, 0x0242}
+ALLOWED_GATE_COMMANDS = {"GATE_OPEN", "GATE_CLOSE"}
 
 
 def _get_leonardo_port() -> str:
@@ -131,6 +136,25 @@ def _write_servo_state(enabled: bool):
     )
 
 
+def _normalize_gate_command(command: str) -> str:
+    normalized = command.strip().upper()
+    if normalized not in ALLOWED_GATE_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid gate command. Allowed: {sorted(ALLOWED_GATE_COMMANDS)}",
+        )
+    return normalized
+
+
+def _write_gate_command(command: str):
+    normalized = _normalize_gate_command(command)
+    _send_line(
+        port=_get_leonardo_port(),
+        baudrate=_get_leonardo_baud(),
+        line=normalized,
+    )
+
+
 def _is_safe_grbl_command(command: str) -> bool:
     command = command.strip()
     if not command:
@@ -198,6 +222,13 @@ def set_servo(state: ServoState):
 def set_leonardo_servo(state: ServoState):
     _write_servo_state(state.enabled)
     return {"enabled": state.enabled}
+
+
+@router.post("/arduino/leonardo/gate", tags=["Arduino"])
+def send_leonardo_gate_command(payload: GateCommand):
+    normalized = _normalize_gate_command(payload.command)
+    _write_gate_command(normalized)
+    return {"command": normalized}
 
 
 @router.post("/arduino/grbl/command", tags=["Arduino"])
