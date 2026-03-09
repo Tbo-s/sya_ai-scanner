@@ -38,7 +38,7 @@ def _get_leonardo_port() -> str:
 
 
 def _get_leonardo_baud() -> int:
-    return int(os.getenv("APP_LEONARDO_BAUD", "9600"))
+    return int(os.getenv("APP_LEONARDO_BAUD", "115200"))
 
 
 def _get_grbl_port() -> str:
