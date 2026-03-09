@@ -36,8 +36,15 @@ enum TrayState {
   TRAY_CLOSING
 };
 
+enum GatePosition {
+  GATE_UNKNOWN_POS,
+  GATE_UP,
+  GATE_DOWN
+};
+
 GateState gateState = GATE_IDLE;
 TrayState trayState = TRAY_IDLE;
+GatePosition gatePosition = GATE_UNKNOWN_POS;
 
 void setup() {
   Serial.begin(115200);
@@ -53,13 +60,22 @@ void setup() {
   stopGate();
   stopTray();
 
+  // Bepaal gate-positie bij opstart
+  updateGatePositionFromSwitches();
+
   Serial.println("Leonardo ready");
+  printGatePosition();
 }
 
 void loop() {
   handleSerial();
   updateGate();
   updateTray();
+
+  // Hou positie up-to-date als gate stilstaat
+  if (gateState == GATE_IDLE) {
+    updateGatePositionFromSwitches();
+  }
 }
 
 void handleSerial() {
@@ -93,10 +109,14 @@ void handleSerial() {
     stopTray();
     gateState = GATE_IDLE;
     trayState = TRAY_IDLE;
+    updateGatePositionFromSwitches();
     Serial.println("All stopped");
   }
   else if (cmd == "STATUS") {
     printStatus();
+  }
+  else if (cmd == "GATE_POS") {
+    printGatePosition();
   }
 }
 
@@ -106,7 +126,9 @@ void updateGate() {
       if (digitalRead(gateOpenSwitch) == HIGH) {   // switch geraakt
         stopGate();
         gateState = GATE_IDLE;
+        gatePosition = GATE_UP;
         Serial.println("GATE_OPEN_DONE");
+        printGatePosition();
       }
       break;
 
@@ -114,7 +136,9 @@ void updateGate() {
       if (digitalRead(gateCloseSwitch) == HIGH) {
         stopGate();
         gateState = GATE_IDLE;
+        gatePosition = GATE_DOWN;
         Serial.println("GATE_CLOSE_DONE");
+        printGatePosition();
       }
       break;
 
@@ -154,17 +178,71 @@ void stopTray() {
   motorTray.write(SERVO_STOP);
 }
 
+void updateGatePositionFromSwitches() {
+  bool openPressed  = (digitalRead(gateOpenSwitch) == HIGH);
+  bool closePressed = (digitalRead(gateCloseSwitch) == HIGH);
+
+  if (openPressed && !closePressed) {
+    gatePosition = GATE_UP;
+  }
+  else if (!openPressed && closePressed) {
+    gatePosition = GATE_DOWN;
+  }
+  else if (!openPressed && !closePressed) {
+    // geen switch geraakt -> tussenpositie of onbekend
+    // laat laatste bekende positie staan
+  }
+  else {
+    // beide switches tegelijk geraakt = fout / mechanisch probleem
+    gatePosition = GATE_UNKNOWN_POS;
+  }
+}
+
+void printGatePosition() {
+  Serial.print("GATE_POS=");
+
+  switch (gatePosition) {
+    case GATE_UP:
+      Serial.println("UP");
+      break;
+    case GATE_DOWN:
+      Serial.println("DOWN");
+      break;
+    default:
+      Serial.println("UNKNOWN");
+      break;
+  }
+}
+
 void printStatus() {
   Serial.print("gateState=");
   Serial.print(gateState);
+
+  Serial.print(", gatePos=");
+  switch (gatePosition) {
+    case GATE_UP:
+      Serial.print("UP");
+      break;
+    case GATE_DOWN:
+      Serial.print("DOWN");
+      break;
+    default:
+      Serial.print("UNKNOWN");
+      break;
+  }
+
   Serial.print(", trayState=");
   Serial.print(trayState);
+
   Serial.print(", gateOpenSw=");
   Serial.print(digitalRead(gateOpenSwitch));
+
   Serial.print(", gateCloseSw=");
   Serial.print(digitalRead(gateCloseSwitch));
+
   Serial.print(", trayOutSw=");
   Serial.print(digitalRead(trayOutSwitch));
+
   Serial.print(", trayInSw=");
   Serial.println(digitalRead(trayInSwitch));
 }

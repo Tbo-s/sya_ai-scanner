@@ -109,11 +109,15 @@
     <!-- STEP 4: IMEI gevonden -->
     <template v-else-if="step === 4">
       <div style="text-align: center; font-size: 24px; max-width: 800px;">
-        dit is jouw imei nummer:
+        Toestel herkend
       </div>
 
-      <div style="text-align: center; font-size: 32px; font-weight: bold;">
-        {{ imeiNumber }}
+      <div style="text-align: center; font-size: 20px; font-weight: 600;">
+        Model: {{ deviceModel || "Onbekend toestel" }}
+      </div>
+
+      <div style="text-align: center; font-size: 20px; font-weight: 600;">
+        Maximale waarde: EUR {{ formattedDeviceMaxValue }}
       </div>
 
       <div style="text-align: center; font-size: 16px; opacity: 0.85;">
@@ -142,8 +146,26 @@
         Laatste commando: {{ lastGateCommand }}
       </div>
 
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
+        <v-btn
+          color="primary"
+          variant="tonal"
+          :loading="gatePositionBusy"
+          @click="fetchGatePosition"
+        >
+          Lees gate positie
+        </v-btn>
+        <div style="font-size: 14px; opacity: 0.9; align-self: center;">
+          Gate positie: <strong>{{ gatePosition || "Onbekend" }}</strong>
+        </div>
+      </div>
+
       <div v-if="gateCommandError" style="font-size: 14px; color: #ff6b6b;">
         {{ gateCommandError }}
+      </div>
+
+      <div v-if="deviceLookupError" style="font-size: 14px; color: #ff6b6b;">
+        {{ deviceLookupError }}
       </div>
     </template>
   </v-container>
@@ -166,15 +188,25 @@ export default {
       cameraKey: 0,
 
       imeiNumber: "",
+      deviceModel: "",
+      deviceMaxValueEur: 0,
+      deviceLookupBusy: false,
+      deviceLookupError: "",
       scanInterval: null,
       gateCommandBusy: false,
       gateCommandError: "",
       lastGateCommand: "",
+      gatePositionBusy: false,
+      gatePosition: "",
     };
   },
   computed: {
     cameraStreamUrl() {
       return `/api/camera/stream?t=${this.cameraKey}`;
+    },
+    formattedDeviceMaxValue() {
+      const value = Number(this.deviceMaxValueEur || 0);
+      return value.toFixed(2);
     },
   },
   methods: {
@@ -183,8 +215,12 @@ export default {
       this.showOk = false;
       this.showScan = false;
       this.imeiNumber = "";
+      this.deviceModel = "";
+      this.deviceMaxValueEur = 0;
+      this.deviceLookupError = "";
       this.gateCommandError = "";
       this.lastGateCommand = "";
+      this.gatePosition = "";
       this.startOkTimer();
     },
 
@@ -256,9 +292,11 @@ async stopScan() {
             this.stopImeiDetection();
 
             await this.stopScan();
+            await this.lookupDeviceFromImei(this.imeiNumber, { silentError: true });
 
             this.step = 4;
             await this.sendGateCommand("GATE_OPEN", { silentError: true });
+            await this.fetchGatePosition({ silentError: true });
           }
         } catch (error) {
           console.error("Failed to detect IMEI", error);
@@ -321,6 +359,7 @@ async stopScan() {
           command,
         });
         this.lastGateCommand = response.data?.command || command;
+        this.fetchGatePosition({ silentError: true });
       } catch (error) {
         const message =
           error?.response?.data?.detail || "Kon gate-commando niet versturen.";
@@ -330,6 +369,48 @@ async stopScan() {
         }
       } finally {
         this.gateCommandBusy = false;
+      }
+    },
+
+    async fetchGatePosition(options = {}) {
+      const { silentError = false } = options;
+
+      this.gatePositionBusy = true;
+
+      try {
+        const response = await axios.get("/api/arduino/leonardo/gate-position");
+        this.gatePosition = response.data?.position || "";
+      } catch (error) {
+        if (!silentError) {
+          const message =
+            error?.response?.data?.detail || "Kon gate positie niet lezen.";
+          this.gateCommandError = String(message);
+          console.error("Failed to fetch gate position", error);
+        }
+      } finally {
+        this.gatePositionBusy = false;
+      }
+    },
+
+    async lookupDeviceFromImei(imei, options = {}) {
+      const { silentError = false } = options;
+
+      this.deviceLookupBusy = true;
+      this.deviceLookupError = "";
+
+      try {
+        const response = await axios.post("/api/device/lookup", { imei });
+        this.deviceModel = response.data?.model || "Unknown device";
+        this.deviceMaxValueEur = Number(response.data?.max_value_eur || 0);
+      } catch (error) {
+        if (!silentError) {
+          const message =
+            error?.response?.data?.detail || "Kon toestelgegevens niet ophalen.";
+          this.deviceLookupError = String(message);
+          console.error("Failed to lookup device by IMEI", error);
+        }
+      } finally {
+        this.deviceLookupBusy = false;
       }
     },
   },

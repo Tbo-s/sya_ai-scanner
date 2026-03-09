@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from controller.notes import router as party_router
 from controller.camera import router as camera_router
 from controller.arduino import router as arduino_router
+from controller.device_lookup import router as device_lookup_router
 from utils.socket_utils import connection_manager
 from pathlib import Path
 from init import init
@@ -23,6 +24,7 @@ app.add_middleware(
 app.include_router(party_router, prefix="/api")
 app.include_router(camera_router, prefix="/api")
 app.include_router(arduino_router, prefix="/api")
+app.include_router(device_lookup_router, prefix="/api")
 
 
 # Add alive status route

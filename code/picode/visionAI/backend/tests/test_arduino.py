@@ -2,6 +2,7 @@ from fastapi import HTTPException
 
 from controller.arduino import (
     _compute_port_suggestions,
+    _extract_gate_position,
     _infer_board_role,
     _is_safe_grbl_command,
     _normalize_gate_command,
@@ -60,3 +61,17 @@ def test_rejects_invalid_gate_command():
         assert "Invalid gate command" in str(exc.detail)
     else:
         assert False, "Expected invalid gate command to raise an exception"
+
+
+def test_extracts_gate_position_from_response_lines():
+    lines = ["Leonardo ready", "GATE_POS=UP"]
+    assert _extract_gate_position(lines) == "UP"
+
+
+def test_extracts_latest_gate_position_if_multiple_present():
+    lines = ["GATE_POS=UNKNOWN", "noise", "GATE_POS=DOWN"]
+    assert _extract_gate_position(lines) == "DOWN"
+
+
+def test_returns_none_if_gate_position_not_found():
+    assert _extract_gate_position(["status=ok", "hello"]) is None

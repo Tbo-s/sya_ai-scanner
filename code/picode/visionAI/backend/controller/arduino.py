@@ -26,6 +26,7 @@ class GateCommand(BaseModel):
 
 
 GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
+GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
 ARDUINO_USB_VIDS = {0x2341, 0x2A03}
 ARDUINO_LEONARDO_PIDS = {0x0036, 0x8036}
 ARDUINO_MEGA_PIDS = {0x0010, 0x0042, 0x0242}
@@ -51,6 +52,10 @@ def _get_grbl_baud() -> int:
 
 def _get_grbl_read_timeout_s() -> float:
     return float(os.getenv("APP_GRBL_READ_TIMEOUT_S", "1.5"))
+
+
+def _get_leonardo_read_timeout_s() -> float:
+    return float(os.getenv("APP_LEONARDO_READ_TIMEOUT_S", "1.5"))
 
 
 def _send_line(port: str, baudrate: int, line: str):
@@ -155,6 +160,44 @@ def _write_gate_command(command: str):
     )
 
 
+def _send_leonardo_with_response(command: str, timeout_s: Optional[float] = None) -> list[str]:
+    port = _get_leonardo_port()
+    baudrate = _get_leonardo_baud()
+    read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
+
+    try:
+        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+
+            started_at = time.time()
+            lines: list[str] = []
+            while time.time() - started_at < read_timeout_s:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                text = raw.decode("utf-8", errors="ignore").strip()
+                if not text:
+                    continue
+                lines.append(text)
+            return lines
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to talk to serial device on {port}: {e}",
+        ) from e
+
+
+def _extract_gate_position(lines: list[str]) -> Optional[str]:
+    for line in reversed(lines):
+        match = GATE_POSITION_PATTERN.match(line.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
 def _is_safe_grbl_command(command: str) -> bool:
     command = command.strip()
     if not command:
@@ -229,6 +272,18 @@ def send_leonardo_gate_command(payload: GateCommand):
     normalized = _normalize_gate_command(payload.command)
     _write_gate_command(normalized)
     return {"command": normalized}
+
+
+@router.get("/arduino/leonardo/gate-position", tags=["Arduino"])
+def get_leonardo_gate_position():
+    response_lines = _send_leonardo_with_response("GATE_POS")
+    position = _extract_gate_position(response_lines)
+    return {
+        "command": "GATE_POS",
+        "position": position,
+        "found": position is not None,
+        "response": response_lines,
+    }
 
 
 @router.post("/arduino/grbl/command", tags=["Arduino"])

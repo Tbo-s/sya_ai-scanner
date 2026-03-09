@@ -1,0 +1,26 @@
+{
+  "exact": {
+    "352134981213276": {
+      "model": "Nothing Phone (2)",
+      "max_value_eur": 0
+    },
+    "490154203237518": {
+      "model": "Apple iPhone 13 128GB",
+      "max_value_eur": 360
+    }
+  },
+  "tac": {
+    "35391805": {
+      "model": "Samsung Galaxy S21 128GB",
+      "max_value_eur": 300
+    },
+    "86678306": {
+      "model": "Xiaomi Redmi Note 10",
+      "max_value_eur": 110
+    }
+  },
+  "fallback": {
+    "model": "Unknown device",
+    "max_value_eur": 0
+  }
+}
