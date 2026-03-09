@@ -115,6 +115,36 @@
       <div style="text-align: center; font-size: 32px; font-weight: bold;">
         {{ imeiNumber }}
       </div>
+
+      <div style="text-align: center; font-size: 16px; opacity: 0.85;">
+        Stuur poortcommando naar Arduino Leonardo
+      </div>
+
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
+        <v-btn
+          color="success"
+          :loading="gateCommandBusy"
+          @click="sendGateCommand('GATE_OPEN')"
+        >
+          Test GATE_OPEN
+        </v-btn>
+        <v-btn
+          color="error"
+          variant="outlined"
+          :loading="gateCommandBusy"
+          @click="sendGateCommand('GATE_CLOSE')"
+        >
+          Test GATE_CLOSE
+        </v-btn>
+      </div>
+
+      <div v-if="lastGateCommand" style="font-size: 14px; opacity: 0.85;">
+        Laatste commando: {{ lastGateCommand }}
+      </div>
+
+      <div v-if="gateCommandError" style="font-size: 14px; color: #ff6b6b;">
+        {{ gateCommandError }}
+      </div>
     </template>
   </v-container>
 </template>
@@ -137,6 +167,9 @@ export default {
 
       imeiNumber: "",
       scanInterval: null,
+      gateCommandBusy: false,
+      gateCommandError: "",
+      lastGateCommand: "",
     };
   },
   computed: {
@@ -149,6 +182,9 @@ export default {
       this.step = 1;
       this.showOk = false;
       this.showScan = false;
+      this.imeiNumber = "";
+      this.gateCommandError = "";
+      this.lastGateCommand = "";
       this.startOkTimer();
     },
 
@@ -222,6 +258,7 @@ async stopScan() {
             await this.stopScan();
 
             this.step = 4;
+            await this.sendGateCommand("GATE_OPEN", { silentError: true });
           }
         } catch (error) {
           console.error("Failed to detect IMEI", error);
@@ -271,6 +308,29 @@ async stopScan() {
         .catch((error) => {
           console.error("Failed to toggle Arduino servo", error);
         });
+    },
+
+    async sendGateCommand(command, options = {}) {
+      const { silentError = false } = options;
+
+      this.gateCommandBusy = true;
+      this.gateCommandError = "";
+
+      try {
+        const response = await axios.post("/api/arduino/leonardo/gate", {
+          command,
+        });
+        this.lastGateCommand = response.data?.command || command;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon gate-commando niet versturen.";
+        this.gateCommandError = String(message);
+        if (!silentError) {
+          console.error("Failed to send gate command", error);
+        }
+      } finally {
+        this.gateCommandBusy = false;
+      }
     },
   },
   beforeUnmount() {

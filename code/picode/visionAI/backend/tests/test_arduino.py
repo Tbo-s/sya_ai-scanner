@@ -1,7 +1,10 @@
+from fastapi import HTTPException
+
 from controller.arduino import (
     _compute_port_suggestions,
     _infer_board_role,
     _is_safe_grbl_command,
+    _normalize_gate_command,
 )
 
 
@@ -43,3 +46,17 @@ def test_suggests_ports_from_classification():
     assert suggestions["leonardo_port"] == "/dev/ttyACM0"
     assert suggestions["grbl_port"] == "/dev/ttyACM1"
     assert suggestions["confidence"] == "high"
+
+
+def test_normalizes_gate_command():
+    assert _normalize_gate_command(" gate_open ") == "GATE_OPEN"
+
+
+def test_rejects_invalid_gate_command():
+    try:
+        _normalize_gate_command("OPEN")
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "Invalid gate command" in str(exc.detail)
+    else:
+        assert False, "Expected invalid gate command to raise an exception"
