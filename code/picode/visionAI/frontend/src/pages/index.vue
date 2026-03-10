@@ -69,15 +69,61 @@
       </div>
 
       <transition name="fade">
-        <v-btn
+        <div
           v-if="showScan && !showCamera"
-          prepend-icon="mdi-video"
-          color="primary"
-          @click="startScan"
+          style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;"
         >
-          scan
-        </v-btn>
+          <v-btn
+            prepend-icon="mdi-video"
+            color="primary"
+            @click="startScan"
+          >
+            scan
+          </v-btn>
+          <v-btn
+            prepend-icon="mdi-form-textbox"
+            color="secondary"
+            variant="tonal"
+            @click="toggleManualImeiInput"
+          >
+            typ imei
+          </v-btn>
+        </div>
       </transition>
+
+      <div
+        v-if="showManualImeiInput && !showCamera"
+        style="width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 10px;"
+      >
+        <v-text-field
+          v-model="manualImeiInput"
+          label="IMEI"
+          variant="outlined"
+          density="comfortable"
+          maxlength="20"
+          hide-details="auto"
+          @keyup.enter="submitManualImei"
+        />
+        <div style="display: flex; gap: 10px; justify-content: center;">
+          <v-btn
+            color="primary"
+            :loading="manualImeiBusy"
+            @click="submitManualImei"
+          >
+            Bevestig IMEI
+          </v-btn>
+          <v-btn
+            color="secondary"
+            variant="text"
+            @click="toggleManualImeiInput"
+          >
+            Annuleer
+          </v-btn>
+        </div>
+        <div v-if="manualImeiError" style="font-size: 14px; color: #ff6b6b;">
+          {{ manualImeiError }}
+        </div>
+      </div>
 
       <img
         v-if="showCamera"
@@ -198,6 +244,10 @@ export default {
       lastGateCommand: "",
       gatePositionBusy: false,
       gatePosition: "",
+      showManualImeiInput: false,
+      manualImeiInput: "",
+      manualImeiError: "",
+      manualImeiBusy: false,
     };
   },
   computed: {
@@ -221,6 +271,9 @@ export default {
       this.gateCommandError = "";
       this.lastGateCommand = "";
       this.gatePosition = "";
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
       this.startOkTimer();
     },
 
@@ -255,6 +308,8 @@ export default {
     },
 
     async startScan() {
+  this.showManualImeiInput = false;
+  this.manualImeiError = "";
   this.stopImeiDetection();
 
   // forceer volledige reset van oude stream
@@ -288,15 +343,7 @@ async stopScan() {
         try {
           const response = await axios.get("/api/imei/detect");
           if (response.data?.found && response.data?.imei) {
-            this.imeiNumber = response.data.imei;
-            this.stopImeiDetection();
-
-            await this.stopScan();
-            await this.lookupDeviceFromImei(this.imeiNumber, { silentError: true });
-
-            this.step = 4;
-            await this.sendGateCommand("GATE_OPEN", { silentError: true });
-            await this.fetchGatePosition({ silentError: true });
+            await this.completeImeiFlow(response.data.imei);
           }
         } catch (error) {
           console.error("Failed to detect IMEI", error);
@@ -323,6 +370,9 @@ async stopScan() {
 
       this.showOk = false;
       this.showScan = false;
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
 
       if (this.step === 1 || this.step === 2) {
         this.startOkTimer();
@@ -390,6 +440,49 @@ async stopScan() {
       } finally {
         this.gatePositionBusy = false;
       }
+    },
+
+    normalizeImeiInput(rawImei) {
+      return String(rawImei || "").replace(/\D/g, "");
+    },
+
+    toggleManualImeiInput() {
+      this.showManualImeiInput = !this.showManualImeiInput;
+      if (!this.showManualImeiInput) {
+        this.manualImeiInput = "";
+        this.manualImeiError = "";
+      }
+    },
+
+    async submitManualImei() {
+      const normalized = this.normalizeImeiInput(this.manualImeiInput);
+      if (normalized.length !== 15) {
+        this.manualImeiError = "IMEI moet exact 15 cijfers bevatten.";
+        return;
+      }
+
+      this.manualImeiBusy = true;
+      this.manualImeiError = "";
+      try {
+        await this.completeImeiFlow(normalized);
+      } finally {
+        this.manualImeiBusy = false;
+      }
+    },
+
+    async completeImeiFlow(imei) {
+      this.imeiNumber = this.normalizeImeiInput(imei);
+      this.stopImeiDetection();
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
+
+      await this.stopScan();
+      await this.lookupDeviceFromImei(this.imeiNumber, { silentError: true });
+
+      this.step = 4;
+      await this.sendGateCommand("GATE_OPEN", { silentError: true });
+      await this.fetchGatePosition({ silentError: true });
     },
 
     async lookupDeviceFromImei(imei, options = {}) {

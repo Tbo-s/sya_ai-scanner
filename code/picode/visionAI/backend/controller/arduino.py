@@ -7,6 +7,16 @@ from typing import Any, Optional
 
 import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
+from services.machine_service import (
+    close_gate as machine_close_gate,
+    emergency_stop as machine_emergency_stop,
+    get_gate_position as machine_get_gate_position,
+    get_tray_position as machine_get_tray_position,
+    home_machine as machine_home_machine,
+    open_gate as machine_open_gate,
+    tray_in as machine_tray_in,
+    tray_out as machine_tray_out,
+)
 
 
 router = APIRouter()
@@ -24,6 +34,9 @@ class GrblCommand(BaseModel):
 class GateCommand(BaseModel):
     command: str = Field(min_length=1)
 
+class TrayCommand(BaseModel):
+    command: str = Field(min_length=1)
+
 
 GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
@@ -31,6 +44,7 @@ ARDUINO_USB_VIDS = {0x2341, 0x2A03}
 ARDUINO_LEONARDO_PIDS = {0x0036, 0x8036}
 ARDUINO_MEGA_PIDS = {0x0010, 0x0042, 0x0242}
 ALLOWED_GATE_COMMANDS = {"GATE_OPEN", "GATE_CLOSE"}
+ALLOWED_TRAY_COMMANDS = {"TRAY_OUT", "TRAY_IN"}
 
 
 def _get_leonardo_port() -> str:
@@ -270,20 +284,47 @@ def set_leonardo_servo(state: ServoState):
 @router.post("/arduino/leonardo/gate", tags=["Arduino"])
 def send_leonardo_gate_command(payload: GateCommand):
     normalized = _normalize_gate_command(payload.command)
-    _write_gate_command(normalized)
+    if normalized == "GATE_OPEN":
+        machine_open_gate()
+    else:
+        machine_close_gate()
     return {"command": normalized}
 
 
 @router.get("/arduino/leonardo/gate-position", tags=["Arduino"])
 def get_leonardo_gate_position():
-    response_lines = _send_leonardo_with_response("GATE_POS")
-    position = _extract_gate_position(response_lines)
-    return {
-        "command": "GATE_POS",
-        "position": position,
-        "found": position is not None,
-        "response": response_lines,
-    }
+    return machine_get_gate_position()
+
+
+@router.post("/arduino/leonardo/tray", tags=["Arduino"])
+def send_leonardo_tray_command(payload: TrayCommand):
+    normalized = payload.command.strip().upper()
+    if normalized not in ALLOWED_TRAY_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid tray command. Allowed: {sorted(ALLOWED_TRAY_COMMANDS)}",
+        )
+
+    if normalized == "TRAY_OUT":
+        machine_tray_out()
+    else:
+        machine_tray_in()
+    return {"command": normalized}
+
+
+@router.get("/arduino/leonardo/tray-position", tags=["Arduino"])
+def get_leonardo_tray_position():
+    return machine_get_tray_position()
+
+
+@router.post("/arduino/leonardo/home", tags=["Arduino"])
+def home_leonardo_machine():
+    return machine_home_machine()
+
+
+@router.post("/arduino/leonardo/emergency-stop", tags=["Arduino"])
+def emergency_stop_leonardo_machine():
+    return machine_emergency_stop()
 
 
 @router.post("/arduino/grbl/command", tags=["Arduino"])
