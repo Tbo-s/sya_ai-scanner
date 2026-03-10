@@ -235,6 +235,32 @@
       <div v-if="deviceLookupError" style="font-size: 14px; color: #ff6b6b;">
         {{ deviceLookupError }}
       </div>
+
+      <v-btn color="primary" @click="goToPriceStep">
+        Volgende
+      </v-btn>
+    </template>
+
+    <!-- STEP 5: Max prijs -->
+    <template v-else-if="step === 5">
+      <div style="text-align: center; font-size: 24px; max-width: 800px;">
+        max prijs van toestel = EUR {{ formattedDeviceMaxValue }}
+      </div>
+
+      <v-btn color="primary" @click="goToPowerOffStep">
+        ok
+      </v-btn>
+    </template>
+
+    <!-- STEP 6: Uitschakelen -->
+    <template v-else-if="step === 6">
+      <div style="text-align: center; font-size: 24px; max-width: 800px;">
+        toestel volledige uitschakelen
+      </div>
+
+      <v-btn color="primary" @click="finishFlow">
+        ok
+      </v-btn>
     </template>
   </v-container>
 </template>
@@ -529,6 +555,27 @@ async stopScan() {
       this.step = 4;
       await this.sendGateCommand("GATE_OPEN", { silentError: true });
       await this.fetchGatePosition({ silentError: true });
+    },
+
+    goToPriceStep() {
+      this.step = 5;
+    },
+
+    goToPowerOffStep() {
+      this.step = 6;
+    },
+
+    async finishFlow() {
+      clearTimeout(this.timer);
+      this.stopImeiDetection();
+      await this.stopScan();
+
+      this.step = 0;
+      this.showOk = false;
+      this.showScan = false;
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
     },
 
     async lookupDeviceFromImei(imei, options = {}) {
