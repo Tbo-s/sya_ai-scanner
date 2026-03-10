@@ -7,6 +7,11 @@ from typing import Any, Optional
 
 import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
+from services.grbl_service import (
+    is_safe_grbl_command as service_is_safe_grbl_command,
+    run_postflow_sequence,
+    send_grbl,
+)
 from services.machine_service import (
     close_gate as machine_close_gate,
     emergency_stop as machine_emergency_stop,
@@ -38,7 +43,6 @@ class TrayCommand(BaseModel):
     command: str = Field(min_length=1)
 
 
-GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
 ARDUINO_USB_VIDS = {0x2341, 0x2A03}
 ARDUINO_LEONARDO_PIDS = {0x0036, 0x8036}
@@ -213,59 +217,11 @@ def _extract_gate_position(lines: list[str]) -> Optional[str]:
 
 
 def _is_safe_grbl_command(command: str) -> bool:
-    command = command.strip()
-    if not command:
-        return False
-    return GRBL_ALLOWED_CHARS.match(command) is not None
+    return service_is_safe_grbl_command(command)
 
 
 def _send_grbl(command: str, wait_for_ok: bool = True):
-    normalized = command.strip()
-    if not _is_safe_grbl_command(normalized):
-        raise HTTPException(status_code=400, detail="Invalid or unsafe GRBL command.")
-
-    port = _get_grbl_port()
-    baudrate = _get_grbl_baud()
-    timeout_s = _get_grbl_read_timeout_s()
-
-    try:
-        with serial.Serial(port, baudrate, timeout=0.2) as ser:
-            if hasattr(ser, "reset_input_buffer"):
-                ser.reset_input_buffer()
-
-            ser.write((normalized + "\n").encode("ascii", errors="ignore"))
-
-            if not wait_for_ok:
-                return {"command": normalized, "ack": None, "response": []}
-
-            started_at = time.time()
-            lines = []
-            while time.time() - started_at < timeout_s:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                text = raw.decode("utf-8", errors="ignore").strip()
-                if not text:
-                    continue
-                lines.append(text)
-
-                lowered = text.lower()
-                if lowered == "ok":
-                    return {"command": normalized, "ack": "ok", "response": lines}
-                if lowered.startswith("error"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail={"command": normalized, "ack": "error", "response": lines},
-                    )
-
-            return {"command": normalized, "ack": "timeout", "response": lines}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to talk to GRBL on {port}: {e}",
-        ) from e
+    return send_grbl(command, wait_for_ok=wait_for_ok)
 
 
 @router.post("/arduino/servo", tags=["Arduino"])
@@ -346,6 +302,12 @@ def grbl_home():
 def grbl_stop():
     # Feed hold / immediate stop signal for GRBL.
     return _send_grbl("!", wait_for_ok=False)
+
+
+@router.post("/arduino/grbl/post-flow", tags=["Arduino"])
+def grbl_post_flow():
+    # Configurable sequence for automated NEMA actions at end-of-flow.
+    return run_postflow_sequence(force=False)
 
 
 @router.get("/arduino/ports", tags=["Arduino"])

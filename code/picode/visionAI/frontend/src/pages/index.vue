@@ -569,6 +569,7 @@ async stopScan() {
       clearTimeout(this.timer);
       this.stopImeiDetection();
       await this.stopScan();
+      await this.triggerGrblPostFlow();
 
       this.step = 0;
       this.showOk = false;
@@ -576,6 +577,15 @@ async stopScan() {
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
+    },
+
+    async triggerGrblPostFlow() {
+      try {
+        await axios.post("/api/arduino/grbl/post-flow");
+      } catch (error) {
+        // No UI needed yet; keep flow moving even when GRBL is disconnected.
+        console.error("Failed to run GRBL post-flow", error);
+      }
     },
 
     async lookupDeviceFromImei(imei, options = {}) {
