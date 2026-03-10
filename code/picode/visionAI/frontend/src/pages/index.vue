@@ -96,18 +96,40 @@
         style="width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 10px;"
       >
         <v-text-field
-          v-model="manualImeiInput"
+          :model-value="formattedManualImeiDisplay"
           label="IMEI"
           variant="outlined"
           density="comfortable"
-          maxlength="20"
+          readonly
           hide-details="auto"
-          @keyup.enter="submitManualImei"
         />
+        <div
+          style="
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+          "
+        >
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('1')">1</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('2')">2</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('3')">3</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('4')">4</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('5')">5</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('6')">6</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('7')">7</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('8')">8</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('9')">9</v-btn>
+          <v-btn color="warning" variant="tonal" @click="clearManualImei">C</v-btn>
+          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('0')">0</v-btn>
+          <v-btn color="secondary" variant="tonal" @click="removeManualDigit">
+            ⌫
+          </v-btn>
+        </div>
         <div style="display: flex; gap: 10px; justify-content: center;">
           <v-btn
             color="primary"
             :loading="manualImeiBusy"
+            :disabled="manualImeiInput.length !== 15"
             @click="submitManualImei"
           >
             Bevestig IMEI
@@ -257,6 +279,9 @@ export default {
     formattedDeviceMaxValue() {
       const value = Number(this.deviceMaxValueEur || 0);
       return value.toFixed(2);
+    },
+    formattedManualImeiDisplay() {
+      return this.manualImeiInput;
     },
   },
   methods: {
@@ -444,6 +469,27 @@ async stopScan() {
 
     normalizeImeiInput(rawImei) {
       return String(rawImei || "").replace(/\D/g, "");
+    },
+
+    appendManualDigit(digit) {
+      if (this.manualImeiInput.length >= 15) {
+        return;
+      }
+      this.manualImeiInput += digit;
+      this.manualImeiError = "";
+    },
+
+    removeManualDigit() {
+      if (!this.manualImeiInput) {
+        return;
+      }
+      this.manualImeiInput = this.manualImeiInput.slice(0, -1);
+      this.manualImeiError = "";
+    },
+
+    clearManualImei() {
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
     },
 
     toggleManualImeiInput() {
