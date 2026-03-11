@@ -22,6 +22,7 @@ from services.machine_service import (
     tray_in as machine_tray_in,
     tray_out as machine_tray_out,
 )
+from services.wrist_sequence_service import run_wrist_sequence
 
 
 router = APIRouter()
@@ -41,6 +42,20 @@ class GateCommand(BaseModel):
 
 class TrayCommand(BaseModel):
     command: str = Field(min_length=1)
+
+
+class WristServoConfigPayload(BaseModel):
+    min_angle: int = Field(ge=0, le=180)
+    center_angle: int = Field(ge=0, le=180)
+    max_angle: int = Field(ge=0, le=180)
+    inverted: bool = False
+
+
+class WristSequenceRequest(BaseModel):
+    simulate: bool = False
+    step_delay_ms: Optional[int] = Field(default=None, ge=0, le=10000)
+    servo1: Optional[WristServoConfigPayload] = None
+    servo2: Optional[WristServoConfigPayload] = None
 
 
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
@@ -281,6 +296,16 @@ def home_leonardo_machine():
 @router.post("/arduino/leonardo/emergency-stop", tags=["Arduino"])
 def emergency_stop_leonardo_machine():
     return machine_emergency_stop()
+
+
+@router.post("/arduino/leonardo/wrist-sequence", tags=["Arduino"])
+def run_leonardo_wrist_sequence(payload: WristSequenceRequest):
+    return run_wrist_sequence(
+        simulate=payload.simulate,
+        step_delay_ms=payload.step_delay_ms,
+        servo1_config_payload=payload.servo1.dict() if payload.servo1 else None,
+        servo2_config_payload=payload.servo2.dict() if payload.servo2 else None,
+    )
 
 
 @router.post("/arduino/grbl/command", tags=["Arduino"])

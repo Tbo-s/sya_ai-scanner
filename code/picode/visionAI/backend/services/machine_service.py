@@ -37,6 +37,11 @@ def _send_line(line: str):
         ) from e
 
 
+def send_leonardo_command(command: str) -> dict:
+    _send_line(command)
+    return {"command": command.strip(), "sent": True}
+
+
 def _send_with_response(command: str, timeout_s: Optional[float] = None) -> list[str]:
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
@@ -64,6 +69,10 @@ def _send_with_response(command: str, timeout_s: Optional[float] = None) -> list
             status_code=500,
             detail=f"Failed to talk to serial device on {port}: {e}",
         ) from e
+
+
+def send_leonardo_command_with_response(command: str, timeout_s: Optional[float] = None) -> list[str]:
+    return _send_with_response(command=command, timeout_s=timeout_s)
 
 
 def _extract_gate_position(lines: list[str]) -> Optional[str]:

@@ -208,6 +208,14 @@
         >
           Test GATE_CLOSE
         </v-btn>
+        <v-btn
+          color="info"
+          variant="tonal"
+          :loading="wristSequenceBusy"
+          @click="runWristSequenceTest"
+        >
+          Test Wrist Sequence (Sim)
+        </v-btn>
       </div>
 
       <div v-if="lastGateCommand" style="font-size: 14px; opacity: 0.85;">
@@ -230,6 +238,10 @@
 
       <div v-if="gateCommandError" style="font-size: 14px; color: #ff6b6b;">
         {{ gateCommandError }}
+      </div>
+
+      <div v-if="wristSequenceError" style="font-size: 14px; color: #ff6b6b;">
+        {{ wristSequenceError }}
       </div>
 
       <div v-if="deviceLookupError" style="font-size: 14px; color: #ff6b6b;">
@@ -258,8 +270,182 @@
         toestel volledige uitschakelen
       </div>
 
-      <v-btn color="primary" @click="finishFlow">
+      <v-btn color="primary" @click="goToMachinePlanStep">
         ok
+      </v-btn>
+    </template>
+
+    <!-- STEP 7: Machineflow -->
+    <template v-else-if="step === 7">
+      <div style="text-align: center; font-size: 24px; max-width: 900px;">
+        Machineflow voor {{ deviceModel || "het toestel" }}
+      </div>
+
+      <div style="text-align: center; font-size: 16px; opacity: 0.85; max-width: 900px;">
+        IMEI {{ imeiNumber || "onbekend" }} · max waarde EUR {{ formattedDeviceMaxValue }}
+      </div>
+
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
+        <v-btn
+          color="primary"
+          variant="tonal"
+          :loading="inspectionPlanBusy"
+          @click="fetchInspectionPlan"
+        >
+          Vernieuw machineplan
+        </v-btn>
+        <v-btn
+          color="secondary"
+          :loading="inspectionRunBusy"
+          @click="runInspection(true)"
+        >
+          Simuleer dry-run
+        </v-btn>
+        <v-btn
+          color="warning"
+          variant="outlined"
+          :loading="inspectionRunBusy"
+          @click="runInspection(false)"
+        >
+          Start ondersteunde hardware-acties
+        </v-btn>
+        <v-btn
+          color="info"
+          variant="tonal"
+          :loading="stateMachineBusy"
+          @click="fetchStateMachineDefinition"
+        >
+          State machine definitie
+        </v-btn>
+        <v-btn
+          color="secondary"
+          variant="outlined"
+          :loading="stateMachineRunBusy"
+          @click="runStateMachine(true)"
+        >
+          Run state machine (dry-run)
+        </v-btn>
+      </div>
+
+      <div v-if="inspectionFlowError" style="font-size: 14px; color: #ff6b6b; text-align: center;">
+        {{ inspectionFlowError }}
+      </div>
+
+      <v-card
+        v-if="inspectionPlan"
+        style="width: 100%; max-width: 980px; background: rgba(255, 255, 255, 0.03);"
+      >
+        <v-card-title>Gepland proces</v-card-title>
+        <v-card-subtitle>
+          {{ inspectionPlan.summary?.phase_count || 0 }} fases ·
+          {{ inspectionPlan.summary?.step_count || 0 }} stappen ·
+          {{ inspectionPlan.summary?.live_supported_step_count || 0 }} live ondersteund
+        </v-card-subtitle>
+        <v-card-text style="display: flex; flex-direction: column; gap: 14px;">
+          <div
+            v-for="phase in inspectionPlan.phases"
+            :key="phase.id"
+            style="padding: 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);"
+          >
+            <div style="font-size: 18px; font-weight: 600;">
+              {{ phase.title }}
+            </div>
+            <div style="font-size: 14px; opacity: 0.8; margin-top: 4px;">
+              {{ phase.description }}
+            </div>
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <div
+                v-for="phaseStep in phase.steps"
+                :key="phaseStep.id"
+                style="display: flex; justify-content: space-between; gap: 12px; font-size: 14px;"
+              >
+                <div>
+                  <strong>{{ phaseStep.title }}</strong>
+                  <div style="opacity: 0.75;">{{ phaseStep.description }}</div>
+                </div>
+                <div style="opacity: 0.7; white-space: nowrap;">
+                  {{ phaseStep.live_supported ? "live" : "nog te koppelen" }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+
+      <v-card
+        v-if="inspectionRunResult"
+        style="width: 100%; max-width: 980px; background: rgba(255, 255, 255, 0.03);"
+      >
+        <v-card-title>Laatste uitvoering</v-card-title>
+        <v-card-subtitle>
+          {{ inspectionRunResult.dry_run ? "Dry-run" : "Live poging" }}
+        </v-card-subtitle>
+        <v-card-text style="display: flex; flex-direction: column; gap: 14px;">
+          <div
+            v-for="phase in inspectionRunResult.phases"
+            :key="phase.id"
+            style="padding: 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);"
+          >
+            <div style="font-size: 18px; font-weight: 600;">
+              {{ phase.title }}
+            </div>
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <div
+                v-for="phaseStep in phase.steps"
+                :key="phaseStep.id"
+                style="display: flex; justify-content: space-between; gap: 12px; font-size: 14px;"
+              >
+                <div>
+                  <strong>{{ phaseStep.title }}</strong>
+                  <div style="opacity: 0.75;">{{ formatInspectionStepDetail(phaseStep.detail) }}</div>
+                </div>
+                <div style="white-space: nowrap; font-weight: 600;">
+                  {{ phaseStep.status }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+
+      <v-card
+        v-if="stateMachineDefinition"
+        style="width: 100%; max-width: 980px; background: rgba(255, 255, 255, 0.03);"
+      >
+        <v-card-title>State machine definitie</v-card-title>
+        <v-card-text style="display: flex; flex-direction: column; gap: 8px;">
+          <div>Initial state: {{ stateMachineDefinition.initial_state }}</div>
+          <div>Aantal states: {{ stateMachineDefinition.states?.length || 0 }}</div>
+          <div>Aantal flow-steps: {{ stateMachineDefinition.flow_steps?.length || 0 }}</div>
+        </v-card-text>
+      </v-card>
+
+      <v-card
+        v-if="stateMachineRunResult"
+        style="width: 100%; max-width: 980px; background: rgba(255, 255, 255, 0.03);"
+      >
+        <v-card-title>State machine run</v-card-title>
+        <v-card-subtitle>
+          Final state: {{ stateMachineRunResult.final_state }}
+        </v-card-subtitle>
+        <v-card-text style="display: flex; flex-direction: column; gap: 8px;">
+          <div>Aantal uitgevoerde states: {{ stateMachineRunResult.states?.length || 0 }}</div>
+        </v-card-text>
+      </v-card>
+
+      <v-btn color="primary" @click="goToThankYouStep">
+        Volgende
+      </v-btn>
+    </template>
+
+    <!-- STEP 8: Afronding -->
+    <template v-else-if="step === 8">
+      <div style="text-align: center; font-size: 24px; max-width: 800px;">
+        bedankt
+      </div>
+
+      <v-btn color="primary" @click="finishFlow">
+        Home
       </v-btn>
     </template>
   </v-container>
@@ -292,10 +478,21 @@ export default {
       lastGateCommand: "",
       gatePositionBusy: false,
       gatePosition: "",
+      wristSequenceBusy: false,
+      wristSequenceError: "",
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
       manualImeiBusy: false,
+      inspectionPlanBusy: false,
+      inspectionRunBusy: false,
+      inspectionFlowError: "",
+      inspectionPlan: null,
+      inspectionRunResult: null,
+      stateMachineBusy: false,
+      stateMachineRunBusy: false,
+      stateMachineDefinition: null,
+      stateMachineRunResult: null,
     };
   },
   computed: {
@@ -315,16 +512,7 @@ export default {
       this.step = 1;
       this.showOk = false;
       this.showScan = false;
-      this.imeiNumber = "";
-      this.deviceModel = "";
-      this.deviceMaxValueEur = 0;
-      this.deviceLookupError = "";
-      this.gateCommandError = "";
-      this.lastGateCommand = "";
-      this.gatePosition = "";
-      this.showManualImeiInput = false;
-      this.manualImeiInput = "";
-      this.manualImeiError = "";
+      this.resetFlowState();
       this.startOkTimer();
     },
 
@@ -493,6 +681,24 @@ async stopScan() {
       }
     },
 
+    async runWristSequenceTest() {
+      this.wristSequenceBusy = true;
+      this.wristSequenceError = "";
+
+      try {
+        await axios.post("/api/arduino/leonardo/wrist-sequence", {
+          simulate: true,
+        });
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon wrist sequence test niet starten.";
+        this.wristSequenceError = String(message);
+        console.error("Failed to run wrist sequence test", error);
+      } finally {
+        this.wristSequenceBusy = false;
+      }
+    },
+
     normalizeImeiInput(rawImei) {
       return String(rawImei || "").replace(/\D/g, "");
     },
@@ -565,6 +771,15 @@ async stopScan() {
       this.step = 6;
     },
 
+    async goToMachinePlanStep() {
+      this.step = 7;
+      await this.fetchInspectionPlan();
+    },
+
+    goToThankYouStep() {
+      this.step = 8;
+    },
+
     async finishFlow() {
       clearTimeout(this.timer);
       this.stopImeiDetection();
@@ -574,9 +789,7 @@ async stopScan() {
       this.step = 0;
       this.showOk = false;
       this.showScan = false;
-      this.showManualImeiInput = false;
-      this.manualImeiInput = "";
-      this.manualImeiError = "";
+      this.resetFlowState();
     },
 
     async triggerGrblPostFlow() {
@@ -608,6 +821,125 @@ async stopScan() {
       } finally {
         this.deviceLookupBusy = false;
       }
+    },
+
+    buildInspectionPayload(dryRun = true) {
+      return {
+        imei: this.imeiNumber,
+        model: this.deviceModel,
+        max_value_eur: this.deviceMaxValueEur,
+        dry_run: dryRun,
+      };
+    },
+
+    async fetchInspectionPlan() {
+      this.inspectionPlanBusy = true;
+      this.inspectionFlowError = "";
+
+      try {
+        const response = await axios.post(
+          "/api/inspection/plan",
+          this.buildInspectionPayload(true),
+        );
+        this.inspectionPlan = response.data;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon machineplan niet ophalen.";
+        this.inspectionFlowError = String(message);
+        console.error("Failed to fetch inspection plan", error);
+      } finally {
+        this.inspectionPlanBusy = false;
+      }
+    },
+
+    async runInspection(dryRun = true) {
+      this.inspectionRunBusy = true;
+      this.inspectionFlowError = "";
+
+      try {
+        const response = await axios.post(
+          "/api/inspection/run",
+          this.buildInspectionPayload(dryRun),
+        );
+        this.inspectionRunResult = response.data;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon machineflow niet uitvoeren.";
+        this.inspectionFlowError = String(message);
+        console.error("Failed to run inspection flow", error);
+      } finally {
+        this.inspectionRunBusy = false;
+      }
+    },
+
+    async fetchStateMachineDefinition() {
+      this.stateMachineBusy = true;
+      this.inspectionFlowError = "";
+
+      try {
+        const response = await axios.get("/api/inspection/state-machine/definition");
+        this.stateMachineDefinition = response.data;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon state machine definitie niet ophalen.";
+        this.inspectionFlowError = String(message);
+        console.error("Failed to fetch inspection state machine definition", error);
+      } finally {
+        this.stateMachineBusy = false;
+      }
+    },
+
+    async runStateMachine(dryRun = true) {
+      this.stateMachineRunBusy = true;
+      this.inspectionFlowError = "";
+
+      try {
+        const response = await axios.post("/api/inspection/state-machine/run", {
+          ...this.buildInspectionPayload(dryRun),
+          trigger_emergency_stop: false,
+        });
+        this.stateMachineRunResult = response.data;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon state machine niet uitvoeren.";
+        this.inspectionFlowError = String(message);
+        console.error("Failed to run inspection state machine", error);
+      } finally {
+        this.stateMachineRunBusy = false;
+      }
+    },
+
+    formatInspectionStepDetail(detail) {
+      if (detail === null || detail === undefined || detail === "") {
+        return "";
+      }
+      if (typeof detail === "string") {
+        return detail;
+      }
+      try {
+        return JSON.stringify(detail);
+      } catch (error) {
+        return String(detail);
+      }
+    },
+
+    resetFlowState() {
+      this.imeiNumber = "";
+      this.deviceModel = "";
+      this.deviceMaxValueEur = 0;
+      this.deviceLookupError = "";
+      this.gateCommandError = "";
+      this.wristSequenceError = "";
+      this.lastGateCommand = "";
+      this.gatePosition = "";
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
+      this.inspectionFlowError = "";
+      this.inspectionPlan = null;
+      this.inspectionRunResult = null;
+      this.stateMachineDefinition = null;
+      this.stateMachineRunResult = null;
     },
   },
   beforeUnmount() {
