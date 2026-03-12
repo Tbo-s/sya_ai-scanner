@@ -1,8 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 import time
 import re
 import threading
+import os
+from datetime import datetime
+from pathlib import Path
 
 router = APIRouter()
 
@@ -71,6 +75,64 @@ class CameraManager:
 
 
 camera_manager = CameraManager(camera_index=0)
+
+
+class PiCaptureRequest(BaseModel):
+    imei: str = ""
+    tag: str = "capture"
+    width: int = Field(default=1920, ge=320, le=5000)
+    height: int = Field(default=1080, ge=240, le=5000)
+    warmup_ms: int = Field(default=300, ge=0, le=5000)
+
+
+def _get_pi_capture_dir() -> Path:
+    default_path = Path(__file__).resolve().parent.parent / "data" / "captures"
+    configured = os.getenv("APP_PI_CAPTURE_DIR", "").strip()
+    return Path(configured) if configured else default_path
+
+
+def _safe_filename_part(value: str, fallback: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip())
+    normalized = normalized.strip("_")
+    return normalized or fallback
+
+
+def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
+    try:
+        from picamera2 import Picamera2  # type: ignore
+    except ModuleNotFoundError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Picamera2 is not installed. On Raspberry Pi install with: "
+                "`sudo apt install -y python3-picamera2`."
+            ),
+        ) from e
+
+    picam2 = None
+    try:
+        picam2 = Picamera2()
+        config = picam2.create_still_configuration(main={"size": (width, height)})
+        picam2.configure(config)
+        picam2.start()
+        if warmup_ms > 0:
+            time.sleep(warmup_ms / 1000.0)
+        frame = picam2.capture_array("main")
+        return frame
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to capture CSI camera frame: {e}") from e
+    finally:
+        if picam2 is not None:
+            try:
+                picam2.stop()
+            except Exception:
+                pass
+            try:
+                picam2.close()
+            except Exception:
+                pass
 
 
 def _extract_imei_from_text(text: str):
@@ -147,3 +209,36 @@ def detect_imei():
             }
 
     return {"found": False}
+
+
+@router.post("/camera/pi/capture", tags=["Camera"])
+def capture_pi_camera_photo(payload: PiCaptureRequest):
+    frame = _capture_pi_csi_frame(
+        width=payload.width,
+        height=payload.height,
+        warmup_ms=payload.warmup_ms,
+    )
+
+    # Picamera2 returns RGB by default; convert so saved file colors are correct.
+    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+    capture_dir = _get_pi_capture_dir()
+    capture_dir.mkdir(parents=True, exist_ok=True)
+
+    imei_part = _safe_filename_part(payload.imei, "no_imei")
+    tag_part = _safe_filename_part(payload.tag, "capture")
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{timestamp}_{imei_part}_{tag_part}.jpg"
+    file_path = capture_dir / filename
+
+    ok = cv2.imwrite(str(file_path), bgr)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to save capture to {file_path}")
+
+    return {
+        "saved": True,
+        "filename": filename,
+        "path": str(file_path),
+        "imei": payload.imei,
+        "tag": payload.tag,
+    }

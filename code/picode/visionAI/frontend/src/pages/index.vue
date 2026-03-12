@@ -208,6 +208,14 @@
         >
           Test GATE_CLOSE
         </v-btn>
+        <v-btn
+          color="info"
+          variant="tonal"
+          :loading="piCaptureBusy"
+          @click="capturePiPhoto('post_imei')"
+        >
+          Neem foto (Pi camera)
+        </v-btn>
       </div>
 
       <div v-if="lastGateCommand" style="font-size: 14px; opacity: 0.85;">
@@ -234,6 +242,14 @@
 
       <div v-if="deviceLookupError" style="font-size: 14px; color: #ff6b6b;">
         {{ deviceLookupError }}
+      </div>
+
+      <div v-if="piCaptureError" style="font-size: 14px; color: #ff6b6b;">
+        {{ piCaptureError }}
+      </div>
+
+      <div v-if="piCaptureSuccess" style="font-size: 14px; opacity: 0.9;">
+        {{ piCaptureSuccess }}
       </div>
 
       <v-btn color="primary" @click="goToPriceStep">
@@ -292,6 +308,9 @@ export default {
       lastGateCommand: "",
       gatePositionBusy: false,
       gatePosition: "",
+      piCaptureBusy: false,
+      piCaptureError: "",
+      piCaptureSuccess: "",
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
@@ -322,6 +341,8 @@ export default {
       this.gateCommandError = "";
       this.lastGateCommand = "";
       this.gatePosition = "";
+      this.piCaptureError = "";
+      this.piCaptureSuccess = "";
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
@@ -490,6 +511,27 @@ async stopScan() {
         }
       } finally {
         this.gatePositionBusy = false;
+      }
+    },
+
+    async capturePiPhoto(tag = "capture") {
+      this.piCaptureBusy = true;
+      this.piCaptureError = "";
+      this.piCaptureSuccess = "";
+
+      try {
+        const response = await axios.post("/api/camera/pi/capture", {
+          imei: this.imeiNumber,
+          tag,
+        });
+        this.piCaptureSuccess = `Foto opgeslagen: ${response.data?.filename || "ok"}`;
+      } catch (error) {
+        const message =
+          error?.response?.data?.detail || "Kon geen foto nemen met Pi camera.";
+        this.piCaptureError = String(message);
+        console.error("Failed to capture photo from Pi camera", error);
+      } finally {
+        this.piCaptureBusy = false;
       }
     },
 
