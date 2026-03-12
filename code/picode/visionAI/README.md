@@ -11,6 +11,10 @@
 
 ---
 
+## Project-specific documentation
+
+- [Module Map (What Does What)](./README_MODULES.md): backend/frontend module responsibilities and where to edit common features.
+
 This project is a template for a fullstack web application using [Vue3](https://vuejs.org/) and [FastAPI](https://fastapi.tiangolo.com/). It includes a basic example of a web application with a simple API and a frontend that consumes it, a simple web application that allows users to create notes. New notes and deleted notes are broadcasted to all connected clients using web sockets.
 
 ![](Easy%20notes.png)
