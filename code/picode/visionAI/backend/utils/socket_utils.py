@@ -1,5 +1,7 @@
+import json
+
 from fastapi import WebSocket, WebSocketDisconnect
-from typing import List
+from typing import Any, List
 
 
 class ConnectionManager:
@@ -14,12 +16,21 @@ class ConnectionManager:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
-    async def broadcast(self, data: dict):
-        for connection in self.active_connections:
+    async def broadcast(self, data: Any):
+        """Broadcast to all connected clients.
+
+        Accepts either a dict (serialised to JSON) or a plain string.
+        Dead connections are silently removed.
+        """
+        text = data if isinstance(data, str) else json.dumps(data)
+        dead: List[WebSocket] = []
+        for connection in list(self.active_connections):
             try:
-                await connection.send_json(data)
-            except WebSocketDisconnect:
-                self.disconnect(connection)
+                await connection.send_text(text)
+            except (WebSocketDisconnect, Exception):
+                dead.append(connection)
+        for conn in dead:
+            self.disconnect(conn)
 
 
 connection_manager = ConnectionManager()

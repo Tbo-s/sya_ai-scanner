@@ -6,6 +6,10 @@ from typing import Any
 from fastapi import HTTPException
 import serial  # type: ignore
 
+# Imported at module level – no circular dependency (machine_service does not
+# import grbl_service).
+import services.machine_service as _machine_svc
+
 
 GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
 
@@ -90,6 +94,97 @@ def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
 def _parse_sequence(raw_sequence: str) -> list[str]:
     parts = re.split(r"[|\n;]+", raw_sequence)
     return [part.strip() for part in parts if part.strip()]
+
+
+# ── Named arm movements ───────────────────────────────────────────────────────
+
+def _feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_FEED_RATE", "3000"))
+
+
+def move_to_front_of_phone() -> dict[str, Any]:
+    x = float(os.getenv("APP_GRBL_FRONT_X", "50.0"))
+    y = float(os.getenv("APP_GRBL_FRONT_Y", "100.0"))
+    f = _feed_rate()
+    r1 = send_grbl("G90")
+    r2 = send_grbl(f"G1 X{x} Y{y} F{f}")
+    return {"action": "move_to_front", "results": [r1, r2]}
+
+
+def move_to_back_of_phone() -> dict[str, Any]:
+    x = float(os.getenv("APP_GRBL_BACK_X", "50.0"))
+    y = float(os.getenv("APP_GRBL_BACK_Y", "20.0"))
+    f = _feed_rate()
+    r1 = send_grbl("G90")
+    r2 = send_grbl(f"G1 X{x} Y{y} F{f}")
+    return {"action": "move_to_back", "results": [r1, r2]}
+
+
+def z_up() -> dict[str, Any]:
+    z = float(os.getenv("APP_GRBL_Z_PICKUP", "30.0"))
+    f = _feed_rate()
+    return send_grbl(f"G1 Z{z} F{f}")
+
+
+def z_down() -> dict[str, Any]:
+    z = float(os.getenv("APP_GRBL_Z_TRAVEL", "5.0"))
+    f = _feed_rate()
+    return send_grbl(f"G1 Z{z} F{f}")
+
+
+def feed_hold() -> dict[str, Any]:
+    """Send GRBL feed hold (!) immediately without waiting for ok."""
+    return send_grbl("!", wait_for_ok=False)
+
+
+def _get_distance_threshold() -> int:
+    return int(os.getenv("APP_ARM_DISTANCE_THRESHOLD_CM", "3"))
+
+
+def move_to_front_slow_with_distance_stop() -> dict[str, Any]:
+    """Start slow XY move toward phone front; stop when distance sensor triggers."""
+    x = float(os.getenv("APP_GRBL_FRONT_X", "50.0"))
+    y = float(os.getenv("APP_GRBL_FRONT_Y", "100.0"))
+    slow_feed = max(200, _feed_rate() // 6)
+    threshold = _get_distance_threshold()
+
+    send_grbl("G90", wait_for_ok=True)
+    # Start the move without waiting for completion
+    send_grbl(f"G1 X{x} Y{y} F{slow_feed}", wait_for_ok=False)
+
+    # Poll distance sensor; issue feed hold when close enough
+    for _ in range(200):
+        result = _machine_svc.read_distance()
+        dist = result.get("distance_cm", -1)
+        if 0 < dist <= threshold:
+            feed_hold()
+            return {"action": "move_front_distance_stop", "stopped": True, "distance_cm": dist}
+        time.sleep(0.1)
+
+    feed_hold()
+    return {"action": "move_front_distance_stop", "stopped": True, "distance_cm": -1, "note": "timeout"}
+
+
+def move_to_back_slow_with_distance_stop() -> dict[str, Any]:
+    """Start slow XY move toward phone back; stop when distance sensor triggers."""
+    x = float(os.getenv("APP_GRBL_BACK_X", "50.0"))
+    y = float(os.getenv("APP_GRBL_BACK_Y", "20.0"))
+    slow_feed = max(200, _feed_rate() // 6)
+    threshold = _get_distance_threshold()
+
+    send_grbl("G90", wait_for_ok=True)
+    send_grbl(f"G1 X{x} Y{y} F{slow_feed}", wait_for_ok=False)
+
+    for _ in range(200):
+        result = _machine_svc.read_distance()
+        dist = result.get("distance_cm", -1)
+        if 0 < dist <= threshold:
+            feed_hold()
+            return {"action": "move_back_distance_stop", "stopped": True, "distance_cm": dist}
+        time.sleep(0.1)
+
+    feed_hold()
+    return {"action": "move_back_distance_stop", "stopped": True, "distance_cm": -1, "note": "timeout"}
 
 
 def run_postflow_sequence(force: bool = False) -> dict[str, Any]:

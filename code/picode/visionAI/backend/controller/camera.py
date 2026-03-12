@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import os
 import time
 import re
 import threading
+from pathlib import Path
 
 router = APIRouter()
 
@@ -70,7 +73,11 @@ class CameraManager:
             self.frame = None
 
 
-camera_manager = CameraManager(camera_index=0)
+def _get_camera_index() -> int:
+    return int(os.getenv("APP_CAMERA_INDEX", "0"))
+
+
+camera_manager = CameraManager(camera_index=_get_camera_index())
 
 
 def _extract_imei_from_text(text: str):
@@ -147,3 +154,37 @@ def detect_imei():
             }
 
     return {"found": False}
+
+
+# ── Photo capture ─────────────────────────────────────────────────────────────
+
+class CaptureRequest(BaseModel):
+    label: str
+    session_id: str
+
+
+def take_photo(label: str, session_id: str) -> dict:
+    """Capture a single frame and save it to disk.  Returns the file path."""
+    frame = camera_manager.get_frame()
+    if frame is None:
+        raise HTTPException(status_code=500, detail="Camera has no frame available.")
+
+    storage_dir = os.getenv("APP_PHOTO_STORAGE_DIR", "/tmp/sya_photos")
+    session_dir = Path(storage_dir) / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{label}.jpg"
+    filepath = session_dir / filename
+
+    ok, jpg = cv2.imencode(".jpg", frame)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to encode camera frame as JPEG.")
+
+    filepath.write_bytes(jpg.tobytes())
+    return {"path": str(filepath), "label": label, "session_id": session_id}
+
+
+@router.post("/camera/capture", tags=["Camera"])
+def capture_photo(payload: CaptureRequest):
+    camera_manager.start()
+    return take_photo(payload.label, payload.session_id)
