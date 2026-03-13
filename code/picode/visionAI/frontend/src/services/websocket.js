@@ -19,9 +19,18 @@ class WebSocketService {
 
     this.socket = new WebSocket(wsUrl);
     this.socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      const keys = Object.keys(data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
 
+      if (!data || typeof data !== "object") {
+        return;
+      }
+
+      const keys = Object.keys(data);
       for (const key of keys) {
         const callbacks = this.callbacks.filter((cb) => cb.message === key);
         callbacks.forEach((cb) => cb.callback(data[key]));
@@ -30,6 +39,7 @@ class WebSocketService {
   }
 
   onMessage(message, callback) {
+    this.callbacks = this.callbacks.filter((cb) => cb.message !== message);
     this.callbacks.push({ message, callback });
     this.ensureConnected();
   }
@@ -39,7 +49,9 @@ class WebSocketService {
   }
 
   close() {
-    if (this.socket) this.socket.close();
+    if (this.socket) {
+      this.socket.close();
+    }
     this.socket = null;
   }
 }

@@ -10,6 +10,9 @@ install:
 	$(VENV_PIP) install -r backend/requirements.txt
 	cd frontend && npm install
 
+build_frontend:
+	cd frontend && npm install && npm run build
+
 # Run the application in development mode
 run_backend:
 	cd backend && ../$(VENV_UVICORN) websrv:app --reload --host 0.0.0.0 --port 3000
@@ -22,6 +25,9 @@ run:
 
 start:
 	make run
+
+run_pi_backend:
+	cd backend && PYTHONPYCACHEPREFIX=/tmp/pycache ../$(VENV_UVICORN) websrv:app --host 0.0.0.0 --port 3000
 
 # Testing
 install_test:

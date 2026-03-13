@@ -1,0 +1,16 @@
+[Unit]
+Description=SYA scanner kiosk
+After=graphical.target sya-backend.service
+Requires=sya-backend.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/sya
+Environment=DISPLAY=:0
+ExecStart=/home/pi/sya/scripts/pi_start_kiosk.sh http://127.0.0.1:3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

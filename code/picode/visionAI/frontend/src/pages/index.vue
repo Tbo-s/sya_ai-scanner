@@ -1,266 +1,146 @@
-
-
-<!-- HomePage -->
-
-
 <template>
-  <v-container
-    style="
-      position: relative;
-      max-width: 1000px;
-      min-height: calc(100vh - 120px);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-    "
-  >
-    <!-- Back button -->
+  <v-container class="page-container">
     <v-btn
-      v-if="step > 0"
+      v-if="showBackButton"
       icon="mdi-arrow-left"
       variant="text"
-      style="
-        position: absolute;
-        top: 70px;
-        left: 20px;
-      "
+      class="back-btn"
       @click="goBack"
     />
 
-    <!-- STEP 0: Start -->
     <template v-if="step === 0">
-      <v-btn color="primary" @click="startFlow">
-        Start
-      </v-btn>
+      <v-btn color="primary" size="x-large" @click="startFlow">Start</v-btn>
     </template>
 
-    <!-- STEP 1 -->
     <template v-else-if="step === 1">
-      <div style="text-align: center; font-size: 20px; max-width: 700px;">
-        screen protector en case is verwijderd van je toestel?
-      </div>
-
+      <div class="prompt">Screen protector en case zijn verwijderd?</div>
       <transition name="fade">
-        <v-btn v-if="showOk" color="primary" @click="nextStep">
-          ok
-        </v-btn>
+        <v-btn v-if="showPrimaryAction" color="primary" @click="nextStep">OK</v-btn>
       </transition>
     </template>
 
-    <!-- STEP 2 -->
     <template v-else-if="step === 2">
-      <div style="text-align: center; font-size: 20px; max-width: 700px;">
-        is het toestel proper
-      </div>
-
+      <div class="prompt">Is het toestel proper?</div>
       <transition name="fade">
-        <v-btn v-if="showOk" color="primary" @click="nextStep">
-          ok
-        </v-btn>
+        <v-btn v-if="showPrimaryAction" color="primary" @click="nextStep">OK</v-btn>
       </transition>
     </template>
 
-    <!-- STEP 3: IMEI + scan -->
     <template v-else-if="step === 3">
-      <div style="text-align: center; font-size: 20px; max-width: 800px;">
-        toets *#06# in op je toestel voor het imei nummer
-      </div>
+      <div class="prompt">Toets *#06# in op je toestel voor het IMEI-nummer.</div>
 
       <transition name="fade">
-        <div
-          v-if="showScan && !showCamera"
-          style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;"
-        >
-          <v-btn
-            prepend-icon="mdi-video"
-            color="primary"
-            @click="startScan"
-          >
-            scan
-          </v-btn>
-          <v-btn
-            prepend-icon="mdi-form-textbox"
-            color="secondary"
-            variant="tonal"
-            @click="toggleManualImeiInput"
-          >
-            typ imei
+        <div v-if="showPrimaryAction && !showCamera" class="action-row">
+          <v-btn prepend-icon="mdi-video" color="primary" @click="startScanCamera">Scan IMEI</v-btn>
+          <v-btn prepend-icon="mdi-form-textbox" color="secondary" variant="tonal" @click="toggleManualImeiInput">
+            Typ IMEI
           </v-btn>
         </div>
       </transition>
 
-      <div
-        v-if="showManualImeiInput && !showCamera"
-        style="width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 10px;"
-      >
+      <div v-if="showManualImeiInput && !showCamera" class="manual-imei">
         <v-text-field
-          :model-value="formattedManualImeiDisplay"
+          :model-value="manualImeiInput"
           label="IMEI"
           variant="outlined"
           density="comfortable"
           readonly
           hide-details="auto"
         />
-        <div
-          style="
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 8px;
-          "
-        >
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('1')">1</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('2')">2</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('3')">3</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('4')">4</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('5')">5</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('6')">6</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('7')">7</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('8')">8</v-btn>
-          <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('9')">9</v-btn>
+        <div class="keypad">
+          <v-btn v-for="digit in digits" :key="digit" :disabled="manualImeiInput.length >= 15" @click="appendManualDigit(digit)">
+            {{ digit }}
+          </v-btn>
           <v-btn color="warning" variant="tonal" @click="clearManualImei">C</v-btn>
           <v-btn :disabled="manualImeiInput.length >= 15" @click="appendManualDigit('0')">0</v-btn>
-          <v-btn color="secondary" variant="tonal" @click="removeManualDigit">
-            ⌫
-          </v-btn>
+          <v-btn color="secondary" variant="tonal" @click="removeManualDigit">⌫</v-btn>
         </div>
-        <div style="display: flex; gap: 10px; justify-content: center;">
-          <v-btn
-            color="primary"
-            :loading="manualImeiBusy"
-            :disabled="manualImeiInput.length !== 15"
-            @click="submitManualImei"
-          >
+        <div class="action-row">
+          <v-btn color="primary" :loading="manualImeiBusy" :disabled="manualImeiInput.length !== 15" @click="submitManualImei">
             Bevestig IMEI
           </v-btn>
-          <v-btn
-            color="secondary"
-            variant="text"
-            @click="toggleManualImeiInput"
-          >
-            Annuleer
-          </v-btn>
+          <v-btn color="secondary" variant="text" @click="toggleManualImeiInput">Annuleer</v-btn>
         </div>
-        <div v-if="manualImeiError" style="font-size: 14px; color: #ff6b6b;">
-          {{ manualImeiError }}
-        </div>
+        <div v-if="manualImeiError" class="error-text">{{ manualImeiError }}</div>
       </div>
 
-      <img
-        v-if="showCamera"
-        :key="cameraKey"
-        :src="cameraStreamUrl"
-        alt="USB camera stream"
-        style="
-          width: 100%;
-          max-width: 900px;
-          border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-        "
-      />
-
-      <div v-if="showCamera" style="font-size: 16px; opacity: 0.8;">
-        Zoeken naar imei barcode...
-      </div>
-
-      <v-btn
-        v-if="showCamera"
-        color="secondary"
-        variant="outlined"
-        @click="stopScan"
-      >
-        Stop camera
-      </v-btn>
+      <img v-if="showCamera" :key="cameraKey" :src="cameraStreamUrl" alt="USB camera stream" class="camera-stream" />
+      <div v-if="showCamera" class="secondary-text">Zoeken naar IMEI barcode...</div>
+      <v-btn v-if="showCamera" color="secondary" variant="outlined" @click="stopScanCamera">Stop camera</v-btn>
     </template>
 
-    <!-- STEP 4: IMEI gevonden -->
     <template v-else-if="step === 4">
-      <div style="text-align: center; font-size: 24px; max-width: 800px;">
-        Toestel herkend
+      <div class="title">Toestel herkend</div>
+      <div class="subtitle">Model: {{ deviceModel || "Onbekend toestel" }}</div>
+      <div class="subtitle">Maximale waarde: EUR {{ formattedDeviceMaxValue }}</div>
+
+      <div class="action-row">
+        <v-btn color="success" :loading="gateCommandBusy" @click="sendGateCommand('GATE_OPEN')">Test GATE_OPEN</v-btn>
+        <v-btn color="error" variant="outlined" :loading="gateCommandBusy" @click="sendGateCommand('GATE_CLOSE')">Test GATE_CLOSE</v-btn>
+        <v-btn color="info" variant="tonal" :loading="piCaptureBusy" @click="capturePiPhoto('post_imei')">Neem foto (Pi camera)</v-btn>
       </div>
 
-      <div style="text-align: center; font-size: 20px; font-weight: 600;">
-        Model: {{ deviceModel || "Onbekend toestel" }}
+      <div class="action-row">
+        <v-btn color="primary" variant="tonal" :loading="gatePositionBusy" @click="fetchGatePosition">Lees gate positie</v-btn>
+        <div class="secondary-text">Gate positie: <strong>{{ gatePosition || "Onbekend" }}</strong></div>
       </div>
 
-      <div style="text-align: center; font-size: 20px; font-weight: 600;">
-        Maximale waarde: EUR {{ formattedDeviceMaxValue }}
-      </div>
+      <div v-if="gateCommandError" class="error-text">{{ gateCommandError }}</div>
+      <div v-if="deviceLookupError" class="error-text">{{ deviceLookupError }}</div>
+      <div v-if="piCaptureError" class="error-text">{{ piCaptureError }}</div>
+      <div v-if="piCaptureSuccess" class="secondary-text">{{ piCaptureSuccess }}</div>
 
-      <div style="text-align: center; font-size: 16px; opacity: 0.85;">
-        Stuur poortcommando naar Arduino Leonardo
-      </div>
-
-      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
-        <v-btn
-          color="success"
-          :loading="gateCommandBusy"
-          @click="sendGateCommand('GATE_OPEN')"
-        >
-          Test GATE_OPEN
-        </v-btn>
-        <v-btn
-          color="error"
-          variant="outlined"
-          :loading="gateCommandBusy"
-          @click="sendGateCommand('GATE_CLOSE')"
-        >
-          Test GATE_CLOSE
-        </v-btn>
-      </div>
-
-      <div v-if="lastGateCommand" style="font-size: 14px; opacity: 0.85;">
-        Laatste commando: {{ lastGateCommand }}
-      </div>
-
-      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
-        <v-btn
-          color="primary"
-          variant="tonal"
-          :loading="gatePositionBusy"
-          @click="fetchGatePosition"
-        >
-          Lees gate positie
-        </v-btn>
-        <div style="font-size: 14px; opacity: 0.9; align-self: center;">
-          Gate positie: <strong>{{ gatePosition || "Onbekend" }}</strong>
-        </div>
-      </div>
-
-      <div v-if="gateCommandError" style="font-size: 14px; color: #ff6b6b;">
-        {{ gateCommandError }}
-      </div>
-
-      <div v-if="deviceLookupError" style="font-size: 14px; color: #ff6b6b;">
-        {{ deviceLookupError }}
-      </div>
-
-      <v-btn color="primary" @click="goToPriceStep">
-        Volgende
-      </v-btn>
+      <v-btn color="primary" @click="step = 5">Volgende</v-btn>
     </template>
 
-    <!-- STEP 5: Max prijs -->
     <template v-else-if="step === 5">
-      <div style="text-align: center; font-size: 24px; max-width: 800px;">
-        max prijs van toestel = EUR {{ formattedDeviceMaxValue }}
-      </div>
-
-      <v-btn color="primary" @click="goToPowerOffStep">
-        ok
-      </v-btn>
+      <div class="title">Max prijs van toestel = EUR {{ formattedDeviceMaxValue }}</div>
+      <v-btn color="primary" @click="step = 6">OK</v-btn>
     </template>
 
-    <!-- STEP 6: Uitschakelen -->
     <template v-else-if="step === 6">
-      <div style="text-align: center; font-size: 24px; max-width: 800px;">
-        toestel volledige uitschakelen
+      <div class="title">Schakel het toestel volledig uit.</div>
+      <v-btn color="primary" :loading="scanBusy" @click="startMachineScan">Toestel is uitgeschakeld</v-btn>
+      <div v-if="scanError" class="error-text">{{ scanError }}</div>
+    </template>
+
+    <template v-else-if="step === 7">
+      <div v-if="scanStatus === 'failed'" class="overlay">
+        <v-icon size="64" color="error">mdi-alert-circle</v-icon>
+        <div class="title">Er is een fout opgetreden</div>
+        <div class="error-text">{{ scanError || "Onbekende fout" }}</div>
+        <v-btn color="error" variant="outlined" @click="abortScan">Afbreken</v-btn>
       </div>
 
-      <v-btn color="primary" @click="finishFlow">
-        ok
-      </v-btn>
+      <template v-else>
+        <v-icon size="56" :color="awaitingUser ? 'warning' : 'primary'" class="spin-icon">
+          {{ awaitingUser ? "mdi-hand-wave" : "mdi-cog" }}
+        </v-icon>
+
+        <template v-if="awaitingUser">
+          <div class="prompt">Toestel toegevoegd in de lade?</div>
+          <v-btn color="success" size="x-large" :loading="confirmBusy" @click="confirmScan">Ja, toestel is geplaatst</v-btn>
+        </template>
+
+        <template v-else>
+          <div class="prompt">Toestel wordt gescand...</div>
+          <div class="progress-area">
+            <div class="secondary-text">Stap {{ currentHwStep }}: {{ currentHwStepLabel }}</div>
+            <v-progress-linear :model-value="progressPct" color="primary" height="8" rounded class="mt-2" />
+          </div>
+        </template>
+
+        <v-btn color="error" variant="text" class="abort-btn" @click="abortScan">Noodstop</v-btn>
+      </template>
+    </template>
+
+    <template v-else-if="step === 8">
+      <div class="title">Scan voltooid</div>
+      <div class="subtitle">Model: {{ deviceModel || "Onbekend toestel" }}</div>
+      <div class="subtitle">Grade: {{ aiResult?.grade || "-" }}</div>
+      <div class="subtitle">Bod: EUR {{ finalOffer }}</div>
+      <div v-if="damageDetailsText" class="secondary-text">Schade: {{ damageDetailsText }}</div>
+      <v-btn color="primary" @click="resetFlow">Nieuwe scan</v-btn>
     </template>
   </v-container>
 </template>
@@ -268,128 +148,164 @@
 <script>
 import axios from "axios";
 import { nextTick } from "vue";
+import { webSocketService } from "@/services/websocket";
+
+const STEP_NAMES = {
+  19: "Gate openen",
+  20: "Lade uitschuiven",
+  21: "Wachten op toestel",
+  23: "Lade sluiten",
+  24: "Gate sluiten",
+  25: "Arm naar voorkant",
+  27: "Vacuüm aanzetten",
+  28: "Arm omhoog",
+  29: "Lade naar camerapositie",
+  30: "Pols positioneren",
+  31: "Foto voorkant 1",
+  32: "Pols draaien",
+  33: "Foto voorkant 2",
+  34: "Pols draaien",
+  35: "Foto voorkant 3",
+  36: "Pols draaien",
+  37: "Lade terugzetten",
+  38: "Pols thuis",
+  39: "Arm omlaag",
+  40: "Vacuüm uitzetten",
+  41: "Arm naar achterkant",
+  42: "Arm benaderen",
+  43: "Vacuüm aanzetten",
+  44: "Arm omhoog",
+  45: "Lade naar camerapositie",
+  46: "Pols positioneren",
+  47: "Foto achterkant 1",
+  48: "Pols draaien",
+  49: "Foto achterkant 2",
+  50: "Pols draaien",
+  51: "Foto achterkant 3",
+  52: "Pols draaien",
+  53: "AI-analyse",
+  54: "Lade terugzetten",
+  55: "Pols thuis",
+  56: "Arm omlaag",
+  57: "Vacuüm uitzetten",
+  58: "Gate openen",
+  59: "Lade uitschuiven",
+};
 
 export default {
   name: "HomePage",
   data() {
     return {
       step: 0,
-      showOk: false,
-      showScan: false,
       timer: null,
-
+      showPrimaryAction: false,
       showCamera: false,
       cameraKey: 0,
-
+      scanInterval: null,
       imeiNumber: "",
       deviceModel: "",
       deviceMaxValueEur: 0,
-      deviceLookupBusy: false,
       deviceLookupError: "",
-      scanInterval: null,
       gateCommandBusy: false,
       gateCommandError: "",
-      lastGateCommand: "",
       gatePositionBusy: false,
       gatePosition: "",
+      piCaptureBusy: false,
+      piCaptureError: "",
+      piCaptureSuccess: "",
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
       manualImeiBusy: false,
+      scanBusy: false,
+      scanStatus: "idle",
+      scanError: "",
+      currentHwStep: 0,
+      currentHwStepName: "",
+      aiResult: null,
+      sessionId: null,
+      confirmBusy: false,
+      digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
   computed: {
+    showBackButton() {
+      return this.step > 0 && this.step < 7;
+    },
     cameraStreamUrl() {
       return `/api/camera/stream?t=${this.cameraKey}`;
     },
     formattedDeviceMaxValue() {
-      const value = Number(this.deviceMaxValueEur || 0);
-      return value.toFixed(2);
+      return Number(this.deviceMaxValueEur || 0).toFixed(2);
     },
-    formattedManualImeiDisplay() {
-      return this.manualImeiInput;
+    awaitingUser() {
+      return this.scanStatus === "awaiting_user";
     },
+    currentHwStepLabel() {
+      return STEP_NAMES[this.currentHwStep] || this.currentHwStepName || "Bezig";
+    },
+    progressPct() {
+      const totalSteps = 59 - 19 + 1;
+      const current = Math.max(0, this.currentHwStep - 19);
+      return Math.round((current / totalSteps) * 100);
+    },
+    finalOffer() {
+      return Number(this.aiResult?.final_offer_eur || 0).toFixed(2);
+    },
+    damageDetailsText() {
+      const details = this.aiResult?.damage_details || [];
+      return details.join(", ");
+    },
+  },
+  mounted() {
+    webSocketService.onMessage("scan_event", this.handleScanEvent);
+  },
+  beforeUnmount() {
+    clearTimeout(this.timer);
+    this.stopImeiDetection();
+    this.stopScanCamera();
+    webSocketService.offMessage("scan_event");
   },
   methods: {
     startFlow() {
+      this.resetFlow();
       this.step = 1;
-      this.showOk = false;
-      this.showScan = false;
-      this.imeiNumber = "";
-      this.deviceModel = "";
-      this.deviceMaxValueEur = 0;
-      this.deviceLookupError = "";
-      this.gateCommandError = "";
-      this.lastGateCommand = "";
-      this.gatePosition = "";
-      this.showManualImeiInput = false;
-      this.manualImeiInput = "";
-      this.manualImeiError = "";
-      this.startOkTimer();
+      this.startActionTimer();
     },
-
     nextStep() {
-      this.showOk = false;
-      this.showScan = false;
+      this.showPrimaryAction = false;
       this.step += 1;
-
-      if (this.step === 2) {
-        this.startOkTimer();
-        return;
-      }
-
-      if (this.step === 3) {
-        this.startScanTimer();
-        return;
+      if (this.step === 2 || this.step === 3) {
+        this.startActionTimer();
       }
     },
-
-    startOkTimer() {
+    startActionTimer() {
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
-        this.showOk = true;
+        this.showPrimaryAction = true;
       }, 1000);
     },
-
-    startScanTimer() {
-      clearTimeout(this.timer);
-      this.timer = setTimeout(() => {
-        this.showScan = true;
-      }, 1000);
+    async startScanCamera() {
+      this.showManualImeiInput = false;
+      this.manualImeiError = "";
+      this.stopImeiDetection();
+      this.showCamera = false;
+      this.cameraKey = Date.now();
+      await nextTick();
+      this.toggleCamera(true);
+      this.startImeiDetection();
     },
-
-    async startScan() {
-  this.showManualImeiInput = false;
-  this.manualImeiError = "";
-  this.stopImeiDetection();
-
-  // forceer volledige reset van oude stream
-  this.showCamera = false;
-  this.cameraKey = Date.now();
-
-  await nextTick();
-
-  this.toggleCamera(true);
-  this.startImeiDetection();
-},
-
-async stopScan() {
-  this.stopImeiDetection();
-
-  if (this.showCamera) {
-    this.toggleCamera(false);
-  }
-
-  // forceer img echt weg
-  this.showCamera = false;
-  this.cameraKey = Date.now();
-
-  await nextTick();
-},
-
+    async stopScanCamera() {
+      this.stopImeiDetection();
+      if (this.showCamera) {
+        this.toggleCamera(false);
+      }
+      this.showCamera = false;
+      this.cameraKey = Date.now();
+      await nextTick();
+    },
     startImeiDetection() {
       this.stopImeiDetection();
-
       this.scanInterval = setInterval(async () => {
         try {
           const response = await axios.get("/api/imei/detect");
@@ -401,102 +317,22 @@ async stopScan() {
         }
       }, 800);
     },
-
     stopImeiDetection() {
       if (this.scanInterval) {
         clearInterval(this.scanInterval);
         this.scanInterval = null;
       }
     },
-
-    async goBack() {
-      clearTimeout(this.timer);
-      this.stopImeiDetection();
-
-      await this.stopScan();
-
-      if (this.step > 0) {
-        this.step -= 1;
-      }
-
-      this.showOk = false;
-      this.showScan = false;
-      this.showManualImeiInput = false;
-      this.manualImeiInput = "";
-      this.manualImeiError = "";
-
-      if (this.step === 1 || this.step === 2) {
-        this.startOkTimer();
-      }
-
-      if (this.step === 3) {
-        this.startScanTimer();
-        return;
-      }
+    toggleCamera(enabled) {
+      this.showCamera = enabled;
+      this.cameraKey += 1;
+      axios.post("/api/arduino/servo", { enabled }).catch((error) => {
+        console.error("Failed to toggle Arduino servo", error);
+      });
     },
-
-    toggleCamera(forceState) {
-      const nextState =
-        typeof forceState === "boolean" ? forceState : !this.showCamera;
-
-      this.showCamera = nextState;
-      this.cameraKey++;
-
-      axios
-        .post("/api/arduino/servo", { enabled: nextState })
-        .catch((error) => {
-          console.error("Failed to toggle Arduino servo", error);
-        });
-    },
-
-    async sendGateCommand(command, options = {}) {
-      const { silentError = false } = options;
-
-      this.gateCommandBusy = true;
-      this.gateCommandError = "";
-
-      try {
-        const response = await axios.post("/api/arduino/leonardo/gate", {
-          command,
-        });
-        this.lastGateCommand = response.data?.command || command;
-        this.fetchGatePosition({ silentError: true });
-      } catch (error) {
-        const message =
-          error?.response?.data?.detail || "Kon gate-commando niet versturen.";
-        this.gateCommandError = String(message);
-        if (!silentError) {
-          console.error("Failed to send gate command", error);
-        }
-      } finally {
-        this.gateCommandBusy = false;
-      }
-    },
-
-    async fetchGatePosition(options = {}) {
-      const { silentError = false } = options;
-
-      this.gatePositionBusy = true;
-
-      try {
-        const response = await axios.get("/api/arduino/leonardo/gate-position");
-        this.gatePosition = response.data?.position || "";
-      } catch (error) {
-        if (!silentError) {
-          const message =
-            error?.response?.data?.detail || "Kon gate positie niet lezen.";
-          this.gateCommandError = String(message);
-          console.error("Failed to fetch gate position", error);
-        }
-      } finally {
-        this.gatePositionBusy = false;
-      }
-    },
-
     normalizeImeiInput(rawImei) {
       return String(rawImei || "").replace(/\D/g, "");
     },
-
     appendManualDigit(digit) {
       if (this.manualImeiInput.length >= 15) {
         return;
@@ -504,20 +340,14 @@ async stopScan() {
       this.manualImeiInput += digit;
       this.manualImeiError = "";
     },
-
     removeManualDigit() {
-      if (!this.manualImeiInput) {
-        return;
-      }
       this.manualImeiInput = this.manualImeiInput.slice(0, -1);
       this.manualImeiError = "";
     },
-
     clearManualImei() {
       this.manualImeiInput = "";
       this.manualImeiError = "";
     },
-
     toggleManualImeiInput() {
       this.showManualImeiInput = !this.showManualImeiInput;
       if (!this.showManualImeiInput) {
@@ -525,14 +355,12 @@ async stopScan() {
         this.manualImeiError = "";
       }
     },
-
     async submitManualImei() {
       const normalized = this.normalizeImeiInput(this.manualImeiInput);
       if (normalized.length !== 15) {
         this.manualImeiError = "IMEI moet exact 15 cijfers bevatten.";
         return;
       }
-
       this.manualImeiBusy = true;
       this.manualImeiError = "";
       try {
@@ -541,89 +369,277 @@ async stopScan() {
         this.manualImeiBusy = false;
       }
     },
-
     async completeImeiFlow(imei) {
       this.imeiNumber = this.normalizeImeiInput(imei);
-      this.stopImeiDetection();
+      await this.stopScanCamera();
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
-      this.manualImeiError = "";
-
-      await this.stopScan();
-      await this.lookupDeviceFromImei(this.imeiNumber, { silentError: true });
-
+      await this.lookupDeviceFromImei(this.imeiNumber);
       this.step = 4;
-      await this.sendGateCommand("GATE_OPEN", { silentError: true });
-      await this.fetchGatePosition({ silentError: true });
+      await this.sendGateCommand("GATE_OPEN");
+      await this.fetchGatePosition();
     },
-
-    goToPriceStep() {
-      this.step = 5;
-    },
-
-    goToPowerOffStep() {
-      this.step = 6;
-    },
-
-    async finishFlow() {
-      clearTimeout(this.timer);
-      this.stopImeiDetection();
-      await this.stopScan();
-      await this.triggerGrblPostFlow();
-
-      this.step = 0;
-      this.showOk = false;
-      this.showScan = false;
-      this.showManualImeiInput = false;
-      this.manualImeiInput = "";
-      this.manualImeiError = "";
-    },
-
-    async triggerGrblPostFlow() {
-      try {
-        await axios.post("/api/arduino/grbl/post-flow");
-      } catch (error) {
-        // No UI needed yet; keep flow moving even when GRBL is disconnected.
-        console.error("Failed to run GRBL post-flow", error);
-      }
-    },
-
-    async lookupDeviceFromImei(imei, options = {}) {
-      const { silentError = false } = options;
-
-      this.deviceLookupBusy = true;
+    async lookupDeviceFromImei(imei) {
       this.deviceLookupError = "";
-
       try {
         const response = await axios.post("/api/device/lookup", { imei });
         this.deviceModel = response.data?.model || "Unknown device";
         this.deviceMaxValueEur = Number(response.data?.max_value_eur || 0);
       } catch (error) {
-        if (!silentError) {
-          const message =
-            error?.response?.data?.detail || "Kon toestelgegevens niet ophalen.";
-          this.deviceLookupError = String(message);
-          console.error("Failed to lookup device by IMEI", error);
-        }
-      } finally {
-        this.deviceLookupBusy = false;
+        this.deviceLookupError = error?.response?.data?.detail || "Kon toestelgegevens niet ophalen.";
+        this.deviceModel = "Unknown device";
+        this.deviceMaxValueEur = 0;
       }
     },
-  },
-  beforeUnmount() {
-    clearTimeout(this.timer);
-    this.stopImeiDetection();
+    async sendGateCommand(command) {
+      this.gateCommandBusy = true;
+      this.gateCommandError = "";
+      try {
+        await axios.post("/api/arduino/leonardo/gate", { command });
+      } catch (error) {
+        this.gateCommandError = error?.response?.data?.detail || "Kon gate-commando niet versturen.";
+      } finally {
+        this.gateCommandBusy = false;
+      }
+    },
+    async fetchGatePosition() {
+      this.gatePositionBusy = true;
+      try {
+        const response = await axios.get("/api/arduino/leonardo/gate-position");
+        this.gatePosition = response.data?.position || "";
+      } catch (error) {
+        this.gateCommandError = error?.response?.data?.detail || "Kon gate positie niet lezen.";
+      } finally {
+        this.gatePositionBusy = false;
+      }
+    },
+    async capturePiPhoto(tag = "capture") {
+      this.piCaptureBusy = true;
+      this.piCaptureError = "";
+      this.piCaptureSuccess = "";
+      try {
+        const response = await axios.post("/api/camera/pi/capture", {
+          imei: this.imeiNumber,
+          tag,
+        });
+        this.piCaptureSuccess = `Foto opgeslagen: ${response.data?.filename || "ok"}`;
+      } catch (error) {
+        this.piCaptureError = error?.response?.data?.detail || "Kon geen foto nemen met Pi camera.";
+      } finally {
+        this.piCaptureBusy = false;
+      }
+    },
+    async startMachineScan() {
+      this.scanBusy = true;
+      this.scanError = "";
+      try {
+        const response = await axios.post("/api/scan/start", {
+          imei: this.imeiNumber,
+          device_model: this.deviceModel,
+          max_value_eur: this.deviceMaxValueEur,
+        });
+        this.sessionId = response.data?.session_id || null;
+        this.scanStatus = "running";
+        this.step = 7;
+      } catch (error) {
+        this.scanError = error?.response?.data?.detail || "Kon scan niet starten.";
+      } finally {
+        this.scanBusy = false;
+      }
+    },
+    handleScanEvent(event) {
+      const { type, step, step_name, data } = event;
+      this.currentHwStep = step;
+      this.currentHwStepName = step_name;
+      if (type === "awaiting_user") {
+        this.scanStatus = "awaiting_user";
+      } else if (type === "step_complete") {
+        this.scanStatus = "running";
+        if (step_name === "ai_done" && data) {
+          this.aiResult = data;
+        }
+      } else if (type === "scan_complete") {
+        this.scanStatus = "complete";
+        this.aiResult = data?.ai_result || this.aiResult;
+        this.step = 8;
+      } else if (type === "scan_failed") {
+        this.scanStatus = "failed";
+        this.scanError = data?.error || data?.reason || "Onbekende fout";
+      }
+    },
+    async confirmScan() {
+      this.confirmBusy = true;
+      try {
+        await axios.post("/api/scan/confirm");
+      } catch (error) {
+        this.scanError = error?.response?.data?.detail || "Bevestiging mislukt.";
+      } finally {
+        this.confirmBusy = false;
+      }
+    },
+    async abortScan() {
+      try {
+        await axios.post("/api/scan/abort");
+      } catch (error) {
+        this.scanError = error?.response?.data?.detail || "Afbreken mislukt.";
+        return;
+      }
+      this.resetFlow();
+    },
+    async goBack() {
+      clearTimeout(this.timer);
+      this.stopImeiDetection();
+      await this.stopScanCamera();
+      if (this.step > 0) {
+        this.step -= 1;
+      }
+      this.showPrimaryAction = false;
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
+      if (this.step === 1 || this.step === 2 || this.step === 3) {
+        this.startActionTimer();
+      }
+    },
+    resetFlow() {
+      clearTimeout(this.timer);
+      this.stopImeiDetection();
+      this.toggleCamera(false);
+      this.step = 0;
+      this.showPrimaryAction = false;
+      this.showCamera = false;
+      this.cameraKey = 0;
+      this.imeiNumber = "";
+      this.deviceModel = "";
+      this.deviceMaxValueEur = 0;
+      this.deviceLookupError = "";
+      this.gateCommandBusy = false;
+      this.gateCommandError = "";
+      this.gatePositionBusy = false;
+      this.gatePosition = "";
+      this.piCaptureBusy = false;
+      this.piCaptureError = "";
+      this.piCaptureSuccess = "";
+      this.showManualImeiInput = false;
+      this.manualImeiInput = "";
+      this.manualImeiError = "";
+      this.manualImeiBusy = false;
+      this.scanBusy = false;
+      this.scanStatus = "idle";
+      this.scanError = "";
+      this.currentHwStep = 0;
+      this.currentHwStepName = "";
+      this.aiResult = null;
+      this.sessionId = null;
+      this.confirmBusy = false;
+    },
   },
 };
 </script>
 
 <style scoped>
+.page-container {
+  position: relative;
+  max-width: 1000px;
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  text-align: center;
+}
+
+.back-btn {
+  position: absolute;
+  top: 70px;
+  left: 20px;
+}
+
+.prompt,
+.title {
+  font-size: 24px;
+  max-width: 800px;
+}
+
+.subtitle {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.secondary-text {
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+.error-text {
+  font-size: 14px;
+  color: rgb(var(--v-theme-error));
+}
+
+.action-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.manual-imei {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.camera-stream {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.progress-area {
+  width: 100%;
+  max-width: 500px;
+}
+
+.abort-btn {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+}
+
+.overlay {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.6s ease;
 }
+
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: spin 3s linear infinite;
 }
 </style>
