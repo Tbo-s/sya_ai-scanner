@@ -24,6 +24,10 @@ def _get_grbl_read_timeout_s() -> float:
     return float(os.getenv("APP_GRBL_READ_TIMEOUT_S", "1.5"))
 
 
+def _get_grbl_startup_delay_s() -> float:
+    return float(os.getenv("APP_GRBL_STARTUP_DELAY_S", "2.0"))
+
+
 def _get_postflow_enabled() -> bool:
     return os.getenv("APP_GRBL_POSTFLOW_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -52,45 +56,85 @@ def is_safe_grbl_command(command: str) -> bool:
     return GRBL_ALLOWED_CHARS.match(command) is not None
 
 
-def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
+def _normalize_command(command: str) -> str:
     normalized = command.strip()
     if not is_safe_grbl_command(normalized):
         raise HTTPException(status_code=400, detail="Invalid or unsafe GRBL command.")
+    return normalized
 
+
+def _prepare_grbl_serial(ser: serial.Serial) -> list[str]:
+    startup_lines = []
+    startup_delay_s = _get_grbl_startup_delay_s()
+    if startup_delay_s > 0:
+        time.sleep(startup_delay_s)
+
+    started_at = time.time()
+    while time.time() - started_at < 0.5:
+        raw = ser.readline()
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if text:
+            startup_lines.append(text)
+
+    if hasattr(ser, "reset_input_buffer"):
+        ser.reset_input_buffer()
+
+    return startup_lines
+
+
+def _send_grbl_on_serial(ser: serial.Serial, command: str, wait_for_ok: bool = True) -> dict[str, Any]:
+    normalized = _normalize_command(command)
+    timeout_s = _get_grbl_read_timeout_s()
+
+    ser.write((normalized + "\n").encode("ascii", errors="ignore"))
+    if not wait_for_ok:
+        return {"command": normalized, "ack": None, "response": []}
+
+    started_at = time.time()
+    lines = []
+    while time.time() - started_at < timeout_s:
+        raw = ser.readline()
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if not text:
+            continue
+        lines.append(text)
+        lowered = text.lower()
+        if lowered == "ok":
+            return {"command": normalized, "ack": "ok", "response": lines}
+        if lowered.startswith("error"):
+            raise HTTPException(
+                status_code=400,
+                detail={"command": normalized, "ack": "error", "response": lines},
+            )
+    raise HTTPException(status_code=504, detail=f"GRBL command timed out: {normalized}")
+
+
+def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]:
     port = _get_grbl_port()
     baudrate = _get_grbl_baud()
-    timeout_s = _get_grbl_read_timeout_s()
+
     try:
         with serial.Serial(port, baudrate, timeout=0.2) as ser:
-            if hasattr(ser, "reset_input_buffer"):
-                ser.reset_input_buffer()
-            ser.write((normalized + "\n").encode("ascii", errors="ignore"))
-            if not wait_for_ok:
-                return {"command": normalized, "ack": None, "response": []}
-
-            started_at = time.time()
-            lines = []
-            while time.time() - started_at < timeout_s:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                text = raw.decode("utf-8", errors="ignore").strip()
-                if not text:
-                    continue
-                lines.append(text)
-                lowered = text.lower()
-                if lowered == "ok":
-                    return {"command": normalized, "ack": "ok", "response": lines}
-                if lowered.startswith("error"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail={"command": normalized, "ack": "error", "response": lines},
-                    )
-            raise HTTPException(status_code=504, detail=f"GRBL command timed out: {normalized}")
+            startup_lines = _prepare_grbl_serial(ser)
+            results = []
+            for index, (command, wait_for_ok) in enumerate(commands):
+                result = _send_grbl_on_serial(ser, command, wait_for_ok=wait_for_ok)
+                if index == 0 and startup_lines:
+                    result["startup"] = startup_lines
+                results.append(result)
+            return results
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
+
+
+def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
+    return _run_grbl_commands([(command, wait_for_ok)])[0]
 
 
 def _parse_sequence(raw_sequence: str) -> list[str]:
@@ -174,9 +218,7 @@ def run_sequence(raw_sequence: str, enabled: bool = True) -> dict[str, Any]:
         }
 
     sequence = _parse_sequence(raw_sequence)
-    results = []
-    for command in sequence:
-        results.append(send_grbl(command, wait_for_ok=command != "!"))
+    results = _run_grbl_commands([(command, command != "!") for command in sequence])
     return {"executed": True, "sequence": sequence, "results": results}
 
 
@@ -188,11 +230,13 @@ def start_test_spin() -> dict[str, Any]:
     axis = _get_test_spin_axis()
     distance = _get_test_spin_distance()
     feed_rate = _get_test_spin_feed_rate()
-    results = [
-        send_grbl("$X"),
-        send_grbl("G91"),
-        send_grbl(f"G1 {axis}{distance} F{feed_rate}", wait_for_ok=False),
-    ]
+    results = _run_grbl_commands(
+        [
+            ("$X", True),
+            ("G91", True),
+            (f"G1 {axis}{distance} F{feed_rate}", False),
+        ]
+    )
     return {
         "started": True,
         "axis": axis,
@@ -203,5 +247,5 @@ def start_test_spin() -> dict[str, Any]:
 
 
 def stop_test_spin() -> dict[str, Any]:
-    results = [feed_hold(), send_grbl("G90")]
+    results = _run_grbl_commands([("!", False), ("G90", True)])
     return {"stopped": True, "results": results}
