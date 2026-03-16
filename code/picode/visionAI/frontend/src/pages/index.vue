@@ -9,6 +9,8 @@
     />
 
     <template v-if="step === 0">
+      <div v-if="testSpinActive" class="secondary-text">NEMA testspin actief. Druk op Start om te stoppen en verder te gaan.</div>
+      <div v-if="testSpinError" class="error-text">{{ testSpinError }}</div>
       <v-btn color="primary" size="x-large" @click="startFlow">Start</v-btn>
     </template>
 
@@ -225,6 +227,8 @@ export default {
       aiResult: null,
       sessionId: null,
       confirmBusy: false,
+      testSpinActive: false,
+      testSpinError: "",
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
@@ -259,16 +263,19 @@ export default {
   },
   mounted() {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
+    this.beginStartupTestSpin();
   },
   beforeUnmount() {
     clearTimeout(this.timer);
     this.stopImeiDetection();
     this.stopScanCamera();
+    this.stopStartupTestSpin();
     webSocketService.offMessage("scan_event");
   },
   methods: {
-    startFlow() {
-      this.resetFlow();
+    async startFlow() {
+      await this.stopStartupTestSpin();
+      this.resetFlow(false);
       this.step = 1;
       this.startActionTimer();
     },
@@ -284,6 +291,31 @@ export default {
       this.timer = setTimeout(() => {
         this.showPrimaryAction = true;
       }, 1000);
+    },
+    async beginStartupTestSpin() {
+      if (this.step !== 0) {
+        return;
+      }
+      this.testSpinError = "";
+      try {
+        await axios.post("/api/arduino/grbl/test-spin/start");
+        this.testSpinActive = true;
+      } catch (error) {
+        this.testSpinActive = false;
+        this.testSpinError = error?.response?.data?.detail || "Kon NEMA testspin niet starten.";
+      }
+    },
+    async stopStartupTestSpin() {
+      if (!this.testSpinActive) {
+        return;
+      }
+      try {
+        await axios.post("/api/arduino/grbl/test-spin/stop");
+      } catch (error) {
+        this.testSpinError = error?.response?.data?.detail || "Kon NEMA testspin niet stoppen.";
+      } finally {
+        this.testSpinActive = false;
+      }
     },
     async startScanCamera() {
       this.showManualImeiInput = false;
@@ -501,7 +533,7 @@ export default {
         this.startActionTimer();
       }
     },
-    resetFlow() {
+    resetFlow(restartTestSpin = true) {
       clearTimeout(this.timer);
       this.stopImeiDetection();
       this.toggleCamera(false);
@@ -532,6 +564,10 @@ export default {
       this.aiResult = null;
       this.sessionId = null;
       this.confirmBusy = false;
+      this.testSpinError = "";
+      if (restartTestSpin) {
+        this.beginStartupTestSpin();
+      }
     },
   },
 };

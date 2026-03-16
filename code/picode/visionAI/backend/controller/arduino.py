@@ -10,6 +10,8 @@ from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     is_safe_grbl_command as service_is_safe_grbl_command,
     run_postflow_sequence,
+    start_test_spin,
+    stop_test_spin,
     send_grbl,
 )
 from services.machine_service import (
@@ -308,6 +310,16 @@ def grbl_stop():
 def grbl_post_flow():
     # Configurable sequence for automated NEMA actions at end-of-flow.
     return run_postflow_sequence(force=False)
+
+
+@router.post("/arduino/grbl/test-spin/start", tags=["Arduino"])
+def grbl_test_spin_start():
+    return start_test_spin()
+
+
+@router.post("/arduino/grbl/test-spin/stop", tags=["Arduino"])
+def grbl_test_spin_stop():
+    return stop_test_spin()
 
 
 @router.get("/arduino/ports", tags=["Arduino"])

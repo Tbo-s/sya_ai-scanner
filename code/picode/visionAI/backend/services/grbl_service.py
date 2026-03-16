@@ -32,6 +32,19 @@ def _get_postflow_sequence() -> str:
     return os.getenv("APP_GRBL_POSTFLOW_SEQUENCE", "$X|$H")
 
 
+def _get_test_spin_axis() -> str:
+    axis = os.getenv("APP_GRBL_TEST_SPIN_AXIS", "X").strip().upper()
+    return axis if axis in {"X", "Y", "Z"} else "X"
+
+
+def _get_test_spin_distance() -> float:
+    return float(os.getenv("APP_GRBL_TEST_SPIN_DISTANCE", "100000"))
+
+
+def _get_test_spin_feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_TEST_SPIN_FEED_RATE", "300"))
+
+
 def is_safe_grbl_command(command: str) -> bool:
     command = command.strip()
     if not command:
@@ -169,3 +182,26 @@ def run_sequence(raw_sequence: str, enabled: bool = True) -> dict[str, Any]:
 
 def run_postflow_sequence(force: bool = False) -> dict[str, Any]:
     return run_sequence(_get_postflow_sequence(), enabled=force or _get_postflow_enabled())
+
+
+def start_test_spin() -> dict[str, Any]:
+    axis = _get_test_spin_axis()
+    distance = _get_test_spin_distance()
+    feed_rate = _get_test_spin_feed_rate()
+    results = [
+        send_grbl("$X"),
+        send_grbl("G91"),
+        send_grbl(f"G1 {axis}{distance} F{feed_rate}", wait_for_ok=False),
+    ]
+    return {
+        "started": True,
+        "axis": axis,
+        "distance": distance,
+        "feed_rate": feed_rate,
+        "results": results,
+    }
+
+
+def stop_test_spin() -> dict[str, Any]:
+    results = [feed_hold(), send_grbl("G90")]
+    return {"stopped": True, "results": results}
