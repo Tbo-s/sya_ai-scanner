@@ -229,6 +229,7 @@ export default {
       confirmBusy: false,
       testSpinActive: false,
       testSpinError: "",
+      autoGrblTestSpinOnUiStart: false,
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
@@ -263,7 +264,7 @@ export default {
   },
   mounted() {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
-    this.beginStartupTestSpin();
+    this.loadRuntimeSettings();
   },
   beforeUnmount() {
     clearTimeout(this.timer);
@@ -273,6 +274,18 @@ export default {
     webSocketService.offMessage("scan_event");
   },
   methods: {
+    async loadRuntimeSettings() {
+      try {
+        const response = await axios.get("/api/system/settings");
+        this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
+      } catch (error) {
+        this.autoGrblTestSpinOnUiStart = false;
+      }
+
+      if (this.autoGrblTestSpinOnUiStart) {
+        await this.beginStartupTestSpin();
+      }
+    },
     async startFlow() {
       await this.stopStartupTestSpin();
       this.resetFlow(false);
@@ -565,7 +578,7 @@ export default {
       this.sessionId = null;
       this.confirmBusy = false;
       this.testSpinError = "";
-      if (restartTestSpin) {
+      if (restartTestSpin && this.autoGrblTestSpinOnUiStart) {
         this.beginStartupTestSpin();
       }
     },
