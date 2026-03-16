@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -19,6 +20,9 @@ from services.system_service import boot_initialize
 from utils.socket_utils import connection_manager
 
 PORT = 3000
+ENV_FILE = Path(__file__).resolve().parent / "config" / "config.env"
+
+load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 app = FastAPI()
 app.add_middleware(

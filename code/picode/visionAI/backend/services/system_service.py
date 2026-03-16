@@ -12,7 +12,7 @@ def get_runtime_settings() -> dict[str, Any]:
     return {
         "auto_safe_idle_on_boot": _is_enabled("APP_MACHINE_SAFE_IDLE_ON_BOOT", "1"),
         "auto_grbl_boot_sequence": _is_enabled("APP_GRBL_BOOT_SEQUENCE_ENABLED", "0"),
-        "auto_grbl_test_spin_on_ui_start": _is_enabled("APP_GRBL_TEST_SPIN_ON_UI_START", "0"),
+        "auto_grbl_test_spin_on_ui_start": _is_enabled("APP_GRBL_TEST_SPIN_ON_UI_START", "1"),
         "grbl_boot_sequence": os.getenv("APP_GRBL_BOOT_SEQUENCE", "$X|$H"),
         "frontend_dist_dir": os.getenv("APP_FRONTEND_DIST", "").strip() or "frontend/dist",
         "camera_index": int(os.getenv("APP_CAMERA_INDEX", "0")),
