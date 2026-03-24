@@ -252,5 +252,9 @@ def start_test_spin() -> dict[str, Any]:
 
 
 def stop_test_spin() -> dict[str, Any]:
-    results = _run_grbl_commands([("!", False), ("G90", True)])
+    # Some GRBL builds do not acknowledge a follow-up modal command reliably
+    # right after a realtime feed-hold during the long-running startup test spin.
+    # The actual motion endpoints already send G90 before moving, so stopping the
+    # spin only needs to issue the realtime hold here.
+    results = _run_grbl_commands([("!", False)])
     return {"stopped": True, "results": results}
