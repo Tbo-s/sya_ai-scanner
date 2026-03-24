@@ -160,12 +160,17 @@ def move_to_back_of_phone() -> dict[str, Any]:
     return {"action": "move_to_back", "results": [send_grbl("G90"), send_grbl(f"G1 X{x} Y{y} F{feed_rate}")]}
 
 
+def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
+    feed_rate = _feed_rate()
+    return {"action": action, "results": [send_grbl("G90"), send_grbl(f"G1 Z{target_z} F{feed_rate}")]}
+
+
 def z_up() -> dict[str, Any]:
-    return send_grbl(f"G1 Z{float(os.getenv('APP_GRBL_Z_PICKUP', '30.0'))} F{_feed_rate()}")
+    return _move_z_absolute(float(os.getenv("APP_GRBL_Z_PICKUP", "30.0")), "z_up")
 
 
 def z_down() -> dict[str, Any]:
-    return send_grbl(f"G1 Z{float(os.getenv('APP_GRBL_Z_TRAVEL', '5.0'))} F{_feed_rate()}")
+    return _move_z_absolute(float(os.getenv("APP_GRBL_Z_TRAVEL", "5.0")), "z_down")
 
 
 def feed_hold() -> dict[str, Any]:

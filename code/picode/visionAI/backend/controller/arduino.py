@@ -13,6 +13,8 @@ from services.grbl_service import (
     start_test_spin,
     stop_test_spin,
     send_grbl,
+    z_down,
+    z_up,
 )
 from services.machine_service import (
     close_gate as machine_close_gate,
@@ -304,6 +306,16 @@ def grbl_home():
 def grbl_stop():
     # Feed hold / immediate stop signal for GRBL.
     return _send_grbl("!", wait_for_ok=False)
+
+
+@router.post("/arduino/grbl/z/up", tags=["Arduino"])
+def grbl_z_up():
+    return z_up()
+
+
+@router.post("/arduino/grbl/z/down", tags=["Arduino"])
+def grbl_z_down():
+    return z_down()
 
 
 @router.post("/arduino/grbl/post-flow", tags=["Arduino"])

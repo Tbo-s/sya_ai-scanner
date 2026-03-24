@@ -1,4 +1,5 @@
-from services.grbl_service import _parse_sequence, is_safe_grbl_command
+import services.grbl_service as grbl_service
+from services.grbl_service import _parse_sequence, is_safe_grbl_command, z_down, z_up
 
 
 def test_grbl_allows_basic_command():
@@ -23,3 +24,37 @@ def test_parse_sequence_semicolon_separator():
 
 def test_parse_sequence_filters_empty_parts():
     assert _parse_sequence(" $X || ; $H ") == ["$X", "$H"]
+
+
+def test_z_up_uses_absolute_positioning(monkeypatch):
+    commands = []
+
+    def fake_send_grbl(command, wait_for_ok=True):
+        commands.append((command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    monkeypatch.setenv("APP_GRBL_Z_PICKUP", "42.5")
+    monkeypatch.setenv("APP_GRBL_FEED_RATE", "1234")
+    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+
+    result = z_up()
+
+    assert result["action"] == "z_up"
+    assert commands == [("G90", True), ("G1 Z42.5 F1234", True)]
+
+
+def test_z_down_uses_absolute_positioning(monkeypatch):
+    commands = []
+
+    def fake_send_grbl(command, wait_for_ok=True):
+        commands.append((command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    monkeypatch.setenv("APP_GRBL_Z_TRAVEL", "7.0")
+    monkeypatch.setenv("APP_GRBL_FEED_RATE", "900")
+    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+
+    result = z_down()
+
+    assert result["action"] == "z_down"
+    assert commands == [("G90", True), ("G1 Z7.0 F900", True)]

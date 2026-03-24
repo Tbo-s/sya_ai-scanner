@@ -11,7 +11,30 @@
     <template v-if="step === 0">
       <div v-if="testSpinActive" class="secondary-text">NEMA testspin actief. Druk op Start om te stoppen en verder te gaan.</div>
       <div v-if="testSpinError" class="error-text">{{ testSpinError }}</div>
-      <v-btn color="primary" size="x-large" @click="startFlow">Start</v-btn>
+      <div class="action-row start-controls">
+        <v-btn color="primary" size="x-large" :disabled="zMoveBusy" @click="startFlow">Start</v-btn>
+        <v-btn
+          color="secondary"
+          variant="tonal"
+          prepend-icon="mdi-arrow-up"
+          :loading="zMoveBusy && zMoveDirection === 'up'"
+          :disabled="zMoveBusy"
+          @click="moveZ('up')"
+        >
+          Up
+        </v-btn>
+        <v-btn
+          color="secondary"
+          variant="tonal"
+          prepend-icon="mdi-arrow-down"
+          :loading="zMoveBusy && zMoveDirection === 'down'"
+          :disabled="zMoveBusy"
+          @click="moveZ('down')"
+        >
+          Down
+        </v-btn>
+      </div>
+      <div v-if="zMoveError" class="error-text">{{ zMoveError }}</div>
     </template>
 
     <template v-else-if="step === 1">
@@ -230,6 +253,9 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
+      zMoveBusy: false,
+      zMoveDirection: "",
+      zMoveError: "",
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
@@ -287,7 +313,10 @@ export default {
       }
     },
     async startFlow() {
-      await this.stopStartupTestSpin();
+      const stopped = await this.stopStartupTestSpin();
+      if (!stopped) {
+        return;
+      }
       this.resetFlow(false);
       this.step = 1;
       this.startActionTimer();
@@ -320,14 +349,39 @@ export default {
     },
     async stopStartupTestSpin() {
       if (!this.testSpinActive) {
-        return;
+        return true;
       }
       try {
         await axios.post("/api/arduino/grbl/test-spin/stop");
+        this.testSpinActive = false;
+        return true;
       } catch (error) {
         this.testSpinError = error?.response?.data?.detail || "Kon NEMA testspin niet stoppen.";
+        return false;
+      }
+    },
+    async moveZ(direction) {
+      if (!["up", "down"].includes(direction)) {
+        return;
+      }
+
+      this.zMoveBusy = true;
+      this.zMoveDirection = direction;
+      this.zMoveError = "";
+
+      try {
+        const stopped = await this.stopStartupTestSpin();
+        if (!stopped) {
+          return;
+        }
+
+        const endpoint = direction === "up" ? "/api/arduino/grbl/z/up" : "/api/arduino/grbl/z/down";
+        await axios.post(endpoint);
+      } catch (error) {
+        this.zMoveError = error?.response?.data?.detail || "Kon Z-as niet bewegen.";
       } finally {
-        this.testSpinActive = false;
+        this.zMoveBusy = false;
+        this.zMoveDirection = "";
       }
     },
     async startScanCamera() {
@@ -578,6 +632,9 @@ export default {
       this.sessionId = null;
       this.confirmBusy = false;
       this.testSpinError = "";
+      this.zMoveBusy = false;
+      this.zMoveDirection = "";
+      this.zMoveError = "";
       if (restartTestSpin && this.autoGrblTestSpinOnUiStart) {
         this.beginStartupTestSpin();
       }
@@ -631,6 +688,10 @@ export default {
   gap: 12px;
   flex-wrap: wrap;
   justify-content: center;
+}
+
+.start-controls {
+  align-items: center;
 }
 
 .manual-imei {
