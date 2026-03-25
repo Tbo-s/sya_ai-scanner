@@ -29,13 +29,13 @@ def test_parse_sequence_filters_empty_parts():
 def test_z_up_uses_absolute_positioning(monkeypatch):
     commands = []
 
-    def fake_send_grbl(command, wait_for_ok=True):
-        commands.append((command, wait_for_ok))
-        return {"command": command, "wait_for_ok": wait_for_ok}
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_Z_PICKUP", "42.5")
     monkeypatch.setenv("APP_GRBL_FEED_RATE", "1234")
-    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = z_up()
 
@@ -46,13 +46,13 @@ def test_z_up_uses_absolute_positioning(monkeypatch):
 def test_z_down_uses_absolute_positioning(monkeypatch):
     commands = []
 
-    def fake_send_grbl(command, wait_for_ok=True):
-        commands.append((command, wait_for_ok))
-        return {"command": command, "wait_for_ok": wait_for_ok}
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_Z_TRAVEL", "7.0")
     monkeypatch.setenv("APP_GRBL_FEED_RATE", "900")
-    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = z_down()
 
@@ -63,13 +63,13 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
 def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
 
-    def fake_send_grbl(command, wait_for_ok=True):
-        commands.append((command, wait_for_ok))
-        return {"command": command, "wait_for_ok": wait_for_ok}
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "1.25")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "90")
-    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = manual_z_up()
 
@@ -80,13 +80,13 @@ def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
 def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
 
-    def fake_send_grbl(command, wait_for_ok=True):
-        commands.append((command, wait_for_ok))
-        return {"command": command, "wait_for_ok": wait_for_ok}
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "0.75")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "60")
-    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = manual_z_down()
 

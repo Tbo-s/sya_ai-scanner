@@ -35,6 +35,7 @@
         </v-btn>
       </div>
       <div v-if="zMoveError" class="error-text">{{ zMoveError }}</div>
+      <div v-if="zMoveSuccess" class="secondary-text">{{ zMoveSuccess }}</div>
     </template>
 
     <template v-else-if="step === 1">
@@ -256,6 +257,7 @@ export default {
       zMoveBusy: false,
       zMoveDirection: "",
       zMoveError: "",
+      zMoveSuccess: "",
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
@@ -368,6 +370,7 @@ export default {
       this.zMoveBusy = true;
       this.zMoveDirection = direction;
       this.zMoveError = "";
+      this.zMoveSuccess = "";
 
       try {
         const stopped = await this.stopStartupTestSpin();
@@ -377,6 +380,7 @@ export default {
 
         const endpoint = direction === "up" ? "/api/arduino/grbl/z/up" : "/api/arduino/grbl/z/down";
         await axios.post(endpoint);
+        this.zMoveSuccess = direction === "up" ? "Z-as omhoog gestuurd." : "Z-as omlaag gestuurd.";
       } catch (error) {
         this.zMoveError = error?.response?.data?.detail || "Kon Z-as niet bewegen.";
       } finally {
@@ -635,6 +639,7 @@ export default {
       this.zMoveBusy = false;
       this.zMoveDirection = "";
       this.zMoveError = "";
+      this.zMoveSuccess = "";
       if (restartTestSpin && this.autoGrblTestSpinOnUiStart) {
         this.beginStartupTestSpin();
       }

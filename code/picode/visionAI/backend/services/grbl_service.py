@@ -183,18 +183,28 @@ def move_to_back_of_phone() -> dict[str, Any]:
 
 def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
     feed_rate = _feed_rate()
-    return {"action": action, "results": [send_grbl("G90"), send_grbl(f"G1 Z{target_z} F{feed_rate}")]}
+    return {
+        "action": action,
+        "results": _run_grbl_commands(
+            [
+                ("G90", True),
+                (f"G1 Z{target_z} F{feed_rate}", True),
+            ]
+        ),
+    }
 
 
 def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
     feed_rate = _get_manual_z_feed_rate()
     return {
         "action": action,
-        "results": [
-            send_grbl("G91"),
-            send_grbl(f"G1 Z{delta_z} F{feed_rate}"),
-            send_grbl("G90"),
-        ],
+        "results": _run_grbl_commands(
+            [
+                ("G91", True),
+                (f"G1 Z{delta_z} F{feed_rate}", True),
+                ("G90", True),
+            ]
+        ),
     }
 
 
