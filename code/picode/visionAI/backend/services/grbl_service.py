@@ -49,6 +49,14 @@ def _get_test_spin_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_TEST_SPIN_FEED_RATE", "300"))
 
 
+def _get_manual_z_step() -> float:
+    return float(os.getenv("APP_GRBL_MANUAL_Z_STEP", "1.0"))
+
+
+def _get_manual_z_feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_MANUAL_Z_FEED_RATE", "120"))
+
+
 def is_safe_grbl_command(command: str) -> bool:
     command = command.strip()
     if not command:
@@ -165,12 +173,32 @@ def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
     return {"action": action, "results": [send_grbl("G90"), send_grbl(f"G1 Z{target_z} F{feed_rate}")]}
 
 
+def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
+    feed_rate = _get_manual_z_feed_rate()
+    return {
+        "action": action,
+        "results": [
+            send_grbl("G91"),
+            send_grbl(f"G1 Z{delta_z} F{feed_rate}"),
+            send_grbl("G90"),
+        ],
+    }
+
+
 def z_up() -> dict[str, Any]:
     return _move_z_absolute(float(os.getenv("APP_GRBL_Z_PICKUP", "30.0")), "z_up")
 
 
 def z_down() -> dict[str, Any]:
     return _move_z_absolute(float(os.getenv("APP_GRBL_Z_TRAVEL", "5.0")), "z_down")
+
+
+def manual_z_up() -> dict[str, Any]:
+    return _jog_z(abs(_get_manual_z_step()), "manual_z_up")
+
+
+def manual_z_down() -> dict[str, Any]:
+    return _jog_z(-abs(_get_manual_z_step()), "manual_z_down")
 
 
 def feed_hold() -> dict[str, Any]:

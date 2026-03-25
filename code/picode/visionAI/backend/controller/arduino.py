@@ -9,12 +9,12 @@ import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     is_safe_grbl_command as service_is_safe_grbl_command,
+    manual_z_down,
+    manual_z_up,
     run_postflow_sequence,
     start_test_spin,
     stop_test_spin,
     send_grbl,
-    z_down,
-    z_up,
 )
 from services.machine_service import (
     close_gate as machine_close_gate,
@@ -310,12 +310,12 @@ def grbl_stop():
 
 @router.post("/arduino/grbl/z/up", tags=["Arduino"])
 def grbl_z_up():
-    return z_up()
+    return manual_z_up()
 
 
 @router.post("/arduino/grbl/z/down", tags=["Arduino"])
 def grbl_z_down():
-    return z_down()
+    return manual_z_down()
 
 
 @router.post("/arduino/grbl/post-flow", tags=["Arduino"])

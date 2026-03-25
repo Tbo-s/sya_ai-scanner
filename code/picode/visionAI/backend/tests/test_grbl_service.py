@@ -1,5 +1,5 @@
 import services.grbl_service as grbl_service
-from services.grbl_service import _parse_sequence, is_safe_grbl_command, z_down, z_up
+from services.grbl_service import _parse_sequence, is_safe_grbl_command, manual_z_down, manual_z_up, z_down, z_up
 
 
 def test_grbl_allows_basic_command():
@@ -58,3 +58,37 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
 
     assert result["action"] == "z_down"
     assert commands == [("G90", True), ("G1 Z7.0 F900", True)]
+
+
+def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
+    commands = []
+
+    def fake_send_grbl(command, wait_for_ok=True):
+        commands.append((command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "1.25")
+    monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "90")
+    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+
+    result = manual_z_up()
+
+    assert result["action"] == "manual_z_up"
+    assert commands == [("G91", True), ("G1 Z1.25 F90", True), ("G90", True)]
+
+
+def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
+    commands = []
+
+    def fake_send_grbl(command, wait_for_ok=True):
+        commands.append((command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "0.75")
+    monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "60")
+    monkeypatch.setattr(grbl_service, "send_grbl", fake_send_grbl)
+
+    result = manual_z_down()
+
+    assert result["action"] == "manual_z_down"
+    assert commands == [("G91", True), ("G1 Z-0.75 F60", True), ("G90", True)]
