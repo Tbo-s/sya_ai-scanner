@@ -92,6 +92,19 @@ def _prepare_grbl_serial(ser: serial.Serial) -> list[str]:
     return startup_lines
 
 
+def _read_grbl_lines(ser: serial.Serial, duration_s: float) -> list[str]:
+    lines = []
+    started_at = time.time()
+    while time.time() - started_at < duration_s:
+        raw = ser.readline()
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
 def _send_grbl_on_serial(ser: serial.Serial, command: str, wait_for_ok: bool = True) -> dict[str, Any]:
     normalized = _normalize_command(command)
     timeout_s = _get_grbl_read_timeout_s()
@@ -280,9 +293,31 @@ def start_test_spin() -> dict[str, Any]:
 
 
 def stop_test_spin() -> dict[str, Any]:
-    # Some GRBL builds do not acknowledge a follow-up modal command reliably
-    # right after a realtime feed-hold during the long-running startup test spin.
-    # The actual motion endpoints already send G90 before moving, so stopping the
-    # spin only needs to issue the realtime hold here.
-    results = _run_grbl_commands([("!", False)])
-    return {"stopped": True, "results": results}
+    port = _get_grbl_port()
+    baudrate = _get_grbl_baud()
+
+    try:
+        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            startup_lines = _prepare_grbl_serial(ser)
+            results = []
+
+            results.append(_send_grbl_on_serial(ser, "!", wait_for_ok=False))
+            time.sleep(0.25)
+
+            ser.write(b"\x18")
+            reset_lines = _read_grbl_lines(ser, max(0.5, _get_grbl_startup_delay_s()))
+
+            unlock_result = _send_grbl_on_serial(ser, "$X", wait_for_ok=True)
+            absolute_result = _send_grbl_on_serial(ser, "G90", wait_for_ok=True)
+
+            if startup_lines:
+                results[0]["startup"] = startup_lines
+            if reset_lines:
+                unlock_result["reset"] = reset_lines
+
+            results.extend([unlock_result, absolute_result])
+            return {"stopped": True, "results": results}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
