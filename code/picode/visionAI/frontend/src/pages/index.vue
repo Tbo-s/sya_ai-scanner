@@ -43,6 +43,8 @@
             <v-btn :loading="isManualActionBusy('w1:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -1)">-1°</v-btn>
             <v-btn :loading="isManualActionBusy('w1:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 30)">+30°</v-btn>
             <v-btn :loading="isManualActionBusy('w1:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -30)">-30°</v-btn>
+            <v-btn :loading="isManualActionBusy('w1:90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 90)">+90°</v-btn>
+            <v-btn :loading="isManualActionBusy('w1:-90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -90)">-90°</v-btn>
           </div>
         </div>
 
@@ -54,6 +56,8 @@
             <v-btn :loading="isManualActionBusy('w2:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -1)">-1°</v-btn>
             <v-btn :loading="isManualActionBusy('w2:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 30)">+30°</v-btn>
             <v-btn :loading="isManualActionBusy('w2:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -30)">-30°</v-btn>
+            <v-btn :loading="isManualActionBusy('w2:90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 90)">+90°</v-btn>
+            <v-btn :loading="isManualActionBusy('w2:-90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -90)">-90°</v-btn>
           </div>
         </div>
 

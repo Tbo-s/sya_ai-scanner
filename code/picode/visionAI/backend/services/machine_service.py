@@ -23,6 +23,18 @@ def _get_leonardo_read_timeout_s() -> float:
     return float(os.getenv("APP_LEONARDO_READ_TIMEOUT_S", "1.5"))
 
 
+def _get_wrist_dwell_ms() -> int:
+    return int(os.getenv("APP_WRIST_DWELL_MS", "600"))
+
+
+def _get_wrist_smooth_step_deg() -> int:
+    return max(1, int(os.getenv("APP_WRIST_SMOOTH_STEP_DEG", "2")))
+
+
+def _get_wrist_smooth_delay_ms() -> int:
+    return max(0, int(os.getenv("APP_WRIST_SMOOTH_DELAY_MS", "25")))
+
+
 def _send_line(line: str):
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
@@ -141,6 +153,29 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
         ) from exc
 
 
+def _send_command_until_token(
+    ser: serial.Serial,
+    command: str,
+    expected_tokens: tuple[str, ...],
+    timeout_s: Optional[float] = None,
+) -> list[str]:
+    read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
+    ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+    started_at = time.time()
+    lines: list[str] = []
+    while time.time() - started_at < read_timeout_s:
+        raw = ser.readline()
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if not text:
+            continue
+        lines.append(text)
+        if any(token in text for token in expected_tokens):
+            return lines
+    return lines
+
+
 def _get_status_values() -> tuple[dict[str, str], list[str]]:
     lines = _send_with_response("STATUS")
     status_line = _extract_status_line(lines)
@@ -160,6 +195,14 @@ def _require_done(command: str, ack: bool, response: list[str]) -> dict:
     if not ack:
         raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
     return {"command": command, "sent": True, "ack": True, "response": response}
+
+
+def _get_wrist_current_angle(status_key: str) -> Optional[int]:
+    try:
+        values, _ = _get_status_values()
+        return _get_status_int(values, status_key, 90)
+    except HTTPException:
+        return None
 
 
 def open_gate() -> dict:
@@ -342,34 +385,103 @@ def set_vacuum2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
 
 def set_wrist1(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
-    dwell_ms = int(os.getenv("APP_WRIST_DWELL_MS", "600"))
-    lines = _send_with_response(f"WRIST1_ANGLE:{angle}")
-    time.sleep(dwell_ms / 1000.0)
-    done = any(f"WRIST1_DONE:{angle}" in line for line in lines)
-    return _require_done(f"WRIST1_ANGLE:{angle}", done, lines) | {"angle": angle}
+    return _move_wrist_smooth(1, angle, _get_wrist_current_angle("wrist1"))
 
 
 def set_wrist2(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
-    dwell_ms = int(os.getenv("APP_WRIST_DWELL_MS", "600"))
-    lines = _send_with_response(f"WRIST2_ANGLE:{angle}")
-    time.sleep(dwell_ms / 1000.0)
-    done = any(f"WRIST2_DONE:{angle}" in line for line in lines)
-    return _require_done(f"WRIST2_ANGLE:{angle}", done, lines) | {"angle": angle}
+    return _move_wrist_smooth(2, angle, _get_wrist_current_angle("wrist2"))
+
+
+def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optional[int]) -> dict:
+    target_angle = max(0, min(180, int(target_angle)))
+    command_prefix = f"WRIST{wrist_index}_ANGLE:"
+    done_prefix = f"WRIST{wrist_index}_DONE:"
+
+    if current_angle is None:
+        lines = _send_with_response(f"{command_prefix}{target_angle}")
+        done = any(f"{done_prefix}{target_angle}" in line for line in lines)
+        time.sleep(_get_wrist_dwell_ms() / 1000.0)
+        return _require_done(f"{command_prefix}{target_angle}", done, lines) | {"angle": target_angle, "smoothed": False}
+
+    current_angle = max(0, min(180, int(current_angle)))
+    if current_angle == target_angle:
+        return {
+            "command": f"{command_prefix}{target_angle}",
+            "sent": True,
+            "ack": True,
+            "response": [],
+            "angle": target_angle,
+            "previous_angle": current_angle,
+            "smoothed": False,
+            "steps": 0,
+        }
+
+    step_deg = _get_wrist_smooth_step_deg()
+    delay_s = _get_wrist_smooth_delay_ms() / 1000.0
+    direction = 1 if target_angle > current_angle else -1
+
+    angles: list[int] = []
+    next_angle = current_angle
+    while next_angle != target_angle:
+        next_angle += direction * step_deg
+        if direction > 0:
+            next_angle = min(next_angle, target_angle)
+        else:
+            next_angle = max(next_angle, target_angle)
+        angles.append(next_angle)
+
+    port = _get_leonardo_port()
+    baudrate = _get_leonardo_baud()
+    try:
+        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            results: list[dict] = []
+            for index, angle in enumerate(angles):
+                command = f"{command_prefix}{angle}"
+                lines = _send_command_until_token(ser, command, (f"{done_prefix}{angle}",))
+                done = any(f"{done_prefix}{angle}" in line for line in lines)
+                if not done:
+                    raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
+                results.append({"command": command, "response": lines})
+                if delay_s > 0 and index < len(angles) - 1:
+                    time.sleep(delay_s)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to talk to serial device on {port}: {exc}",
+        ) from exc
+
+    time.sleep(_get_wrist_dwell_ms() / 1000.0)
+    return {
+        "command": f"{command_prefix}{target_angle}",
+        "sent": True,
+        "ack": True,
+        "response": _flatten_command_responses(results),
+        "results": results,
+        "angle": target_angle,
+        "previous_angle": current_angle,
+        "smoothed": len(angles) > 1,
+        "steps": len(angles),
+    }
 
 
 def adjust_wrist1(delta: int) -> dict:
     values, _ = _get_status_values()
     current_angle = _get_status_int(values, "wrist1", 90)
     target_angle = max(0, min(180, current_angle + int(delta)))
-    return set_wrist1(target_angle) | {"previous_angle": current_angle, "delta": int(delta)}
+    return _move_wrist_smooth(1, target_angle, current_angle) | {"previous_angle": current_angle, "delta": int(delta)}
 
 
 def adjust_wrist2(delta: int) -> dict:
     values, _ = _get_status_values()
     current_angle = _get_status_int(values, "wrist2", 90)
     target_angle = max(0, min(180, current_angle + int(delta)))
-    return set_wrist2(target_angle) | {"previous_angle": current_angle, "delta": int(delta)}
+    return _move_wrist_smooth(2, target_angle, current_angle) | {"previous_angle": current_angle, "delta": int(delta)}
 
 
 def wrist_home() -> dict:
