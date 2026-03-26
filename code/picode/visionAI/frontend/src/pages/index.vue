@@ -518,7 +518,7 @@ export default {
         this.manualStatusBusy = false;
       }
     },
-    async runManualAction(actionKey, successMessage, requestFn, refreshStatus = false) {
+    async runManualAction(actionKey, successMessage, requestFn, onSuccess = null) {
       this.manualControlBusy = actionKey;
       this.manualControlError = "";
       this.manualControlSuccess = "";
@@ -529,10 +529,10 @@ export default {
           return;
         }
 
-        await requestFn();
+        const response = await requestFn();
         this.manualControlSuccess = successMessage;
-        if (refreshStatus) {
-          await this.fetchManualStatus();
+        if (typeof onSuccess === "function") {
+          onSuccess(response?.data || {});
         }
       } catch (error) {
         this.manualControlError = error?.response?.data?.detail || "Manuele beweging mislukt.";
@@ -550,7 +550,12 @@ export default {
         `w${wristIndex}:${delta}`,
         label,
         () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }),
-        true
+        (data) => {
+          const angle = this.parseManualStatusInt(data?.angle);
+          if (angle !== null) {
+            this.manualStatus[`wrist${wristIndex}`] = angle;
+          }
+        }
       );
     },
     async setVacuumMotor(vacuumIndex, enabled) {
@@ -559,7 +564,9 @@ export default {
         `vac${vacuumIndex}:motor:${enabled ? "on" : "off"}`,
         label,
         () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }),
-        true
+        () => {
+          this.manualStatus[`vac${vacuumIndex}`] = enabled;
+        }
       );
     },
     async setValve(vacuumIndex, enabled) {
@@ -568,7 +575,9 @@ export default {
         `vac${vacuumIndex}:valve:${enabled ? "on" : "off"}`,
         label,
         () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }),
-        true
+        () => {
+          this.manualStatus[`valve${vacuumIndex}`] = enabled;
+        }
       );
     },
     async emergencyStopAll() {
@@ -576,7 +585,12 @@ export default {
         "stop-all",
         "Alles gestopt.",
         () => axios.post("/api/arduino/emergency-stop-all"),
-        true
+        () => {
+          this.manualStatus.vac1 = false;
+          this.manualStatus.vac2 = false;
+          this.manualStatus.valve1 = false;
+          this.manualStatus.valve2 = false;
+        }
       );
     },
     async startScanCamera() {
