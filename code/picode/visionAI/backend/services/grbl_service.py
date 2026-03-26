@@ -224,6 +224,10 @@ def manual_z_down() -> dict[str, Any]:
     return _jog_z(-abs(_get_manual_z_step()), "manual_z_down")
 
 
+def manual_z_move(delta_z: float) -> dict[str, Any]:
+    return _jog_z(float(delta_z), "manual_z_move")
+
+
 def feed_hold() -> dict[str, Any]:
     return send_grbl("!", wait_for_ok=False)
 

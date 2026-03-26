@@ -100,6 +100,62 @@ def _derive_tray_position_from_status(values: dict[str, str]) -> str:
     return "UNKNOWN"
 
 
+def _contains_token(lines: list[str], token: str) -> bool:
+    return any(token in line for line in lines)
+
+
+def _flatten_command_responses(results: list[dict]) -> list[str]:
+    lines: list[str] = []
+    for result in results:
+        lines.extend(result.get("response", []))
+    return lines
+
+
+def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float] = None) -> list[dict]:
+    port = _get_leonardo_port()
+    baudrate = _get_leonardo_baud()
+    read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
+    try:
+        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            results: list[dict] = []
+            for command in commands:
+                ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+                started_at = time.time()
+                lines: list[str] = []
+                while time.time() - started_at < read_timeout_s:
+                    raw = ser.readline()
+                    if not raw:
+                        continue
+                    text = raw.decode("utf-8", errors="ignore").strip()
+                    if text:
+                        lines.append(text)
+                results.append({"command": command, "response": lines})
+            return results
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to talk to serial device on {port}: {exc}",
+        ) from exc
+
+
+def _get_status_values() -> tuple[dict[str, str], list[str]]:
+    lines = _send_with_response("STATUS")
+    status_line = _extract_status_line(lines)
+    if not status_line:
+        raise HTTPException(status_code=504, detail="STATUS did not return a parseable status line.")
+    return _parse_status_values(status_line), lines
+
+
+def _get_status_int(values: dict[str, str], key: str, default: int) -> int:
+    try:
+        return int(values.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _require_done(command: str, ack: bool, response: list[str]) -> dict:
     if not ack:
         raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
@@ -161,6 +217,16 @@ def get_tray_position() -> dict:
     }
 
 
+def get_status() -> dict:
+    values, lines = _get_status_values()
+    return {
+        "command": "STATUS",
+        "found": True,
+        "status": values,
+        "response": lines,
+    }
+
+
 def home_machine() -> dict:
     return {"ok": True, "actions": [tray_in(), close_gate()]}
 
@@ -171,37 +237,77 @@ def emergency_stop() -> dict:
 
 
 def vacuum_on(raise_on_no_ack: bool = True) -> dict:
-    lines = _send_with_response("VACUUM_ON")
-    done = any("VACUUM_ON_DONE" in line for line in lines)
+    results = _send_sequence_with_response(["VAC_ALL_ON", "VALVE_ALL_ON"], timeout_s=0.4)
+    lines = _flatten_command_responses(results)
+    done = _contains_token(lines, "VAC_ALL_ON_DONE") and _contains_token(lines, "VALVE_ALL_ON_DONE")
     if raise_on_no_ack:
-        return _require_done("VACUUM_ON", done, lines)
-    return {"command": "VACUUM_ON", "sent": True, "ack": done, "response": lines}
+        return _require_done("VAC_ALL_ON+VALVE_ALL_ON", done, lines) | {"results": results}
+    return {"command": "VAC_ALL_ON+VALVE_ALL_ON", "sent": True, "ack": done, "response": lines, "results": results}
 
 
 def vacuum_off(raise_on_no_ack: bool = True) -> dict:
-    lines = _send_with_response("VACUUM_OFF")
-    done = any("VACUUM_OFF_DONE" in line for line in lines)
+    results = _send_sequence_with_response(["VAC_ALL_OFF", "VALVE_ALL_OFF"], timeout_s=0.4)
+    lines = _flatten_command_responses(results)
+    done = _contains_token(lines, "VAC_ALL_OFF_DONE") and _contains_token(lines, "VALVE_ALL_OFF_DONE")
     if raise_on_no_ack:
-        return _require_done("VACUUM_OFF", done, lines)
-    return {"command": "VACUUM_OFF", "sent": True, "ack": done, "response": lines}
+        return _require_done("VAC_ALL_OFF+VALVE_ALL_OFF", done, lines) | {"results": results}
+    return {"command": "VAC_ALL_OFF+VALVE_ALL_OFF", "sent": True, "ack": done, "response": lines, "results": results}
+
+
+def set_vacuum1(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    commands = ["VAC1_ON", "VALVE1_ON"] if enabled else ["VAC1_OFF", "VALVE1_OFF"]
+    expected = ["VAC1_ON_DONE", "VALVE1_ON_DONE"] if enabled else ["VAC1_OFF_DONE", "VALVE1_OFF_DONE"]
+    results = _send_sequence_with_response(commands, timeout_s=0.4)
+    lines = _flatten_command_responses(results)
+    done = all(_contains_token(lines, token) for token in expected)
+    command = "+".join(commands)
+    if raise_on_no_ack:
+        return _require_done(command, done, lines) | {"enabled": enabled, "results": results}
+    return {"command": command, "sent": True, "ack": done, "enabled": enabled, "response": lines, "results": results}
+
+
+def set_vacuum2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    commands = ["VAC2_ON", "VALVE2_ON"] if enabled else ["VAC2_OFF", "VALVE2_OFF"]
+    expected = ["VAC2_ON_DONE", "VALVE2_ON_DONE"] if enabled else ["VAC2_OFF_DONE", "VALVE2_OFF_DONE"]
+    results = _send_sequence_with_response(commands, timeout_s=0.4)
+    lines = _flatten_command_responses(results)
+    done = all(_contains_token(lines, token) for token in expected)
+    command = "+".join(commands)
+    if raise_on_no_ack:
+        return _require_done(command, done, lines) | {"enabled": enabled, "results": results}
+    return {"command": command, "sent": True, "ack": done, "enabled": enabled, "response": lines, "results": results}
 
 
 def set_wrist1(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
     dwell_ms = int(os.getenv("APP_WRIST_DWELL_MS", "600"))
-    lines = _send_with_response(f"SERVO1_POS:{angle}")
+    lines = _send_with_response(f"WRIST1_ANGLE:{angle}")
     time.sleep(dwell_ms / 1000.0)
-    done = any(f"SERVO1_DONE:{angle}" in line for line in lines)
-    return _require_done(f"SERVO1_POS:{angle}", done, lines) | {"angle": angle}
+    done = any(f"WRIST1_DONE:{angle}" in line for line in lines)
+    return _require_done(f"WRIST1_ANGLE:{angle}", done, lines) | {"angle": angle}
 
 
 def set_wrist2(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
     dwell_ms = int(os.getenv("APP_WRIST_DWELL_MS", "600"))
-    lines = _send_with_response(f"SERVO2_POS:{angle}")
+    lines = _send_with_response(f"WRIST2_ANGLE:{angle}")
     time.sleep(dwell_ms / 1000.0)
-    done = any(f"SERVO2_DONE:{angle}" in line for line in lines)
-    return _require_done(f"SERVO2_POS:{angle}", done, lines) | {"angle": angle}
+    done = any(f"WRIST2_DONE:{angle}" in line for line in lines)
+    return _require_done(f"WRIST2_ANGLE:{angle}", done, lines) | {"angle": angle}
+
+
+def adjust_wrist1(delta: int) -> dict:
+    values, _ = _get_status_values()
+    current_angle = _get_status_int(values, "wrist1", 90)
+    target_angle = max(0, min(180, current_angle + int(delta)))
+    return set_wrist1(target_angle) | {"previous_angle": current_angle, "delta": int(delta)}
+
+
+def adjust_wrist2(delta: int) -> dict:
+    values, _ = _get_status_values()
+    current_angle = _get_status_int(values, "wrist2", 90)
+    target_angle = max(0, min(180, current_angle + int(delta)))
+    return set_wrist2(target_angle) | {"previous_angle": current_angle, "delta": int(delta)}
 
 
 def wrist_home() -> dict:

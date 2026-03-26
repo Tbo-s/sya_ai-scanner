@@ -12,30 +12,106 @@
       <div v-if="testSpinActive" class="secondary-text">NEMA testspin actief. Druk op Start om te stoppen en verder te gaan.</div>
       <div v-if="testSpinError" class="error-text">{{ testSpinError }}</div>
       <div class="action-row start-controls">
-        <v-btn color="primary" size="x-large" :disabled="zMoveBusy" @click="startFlow">Start</v-btn>
+        <v-btn color="primary" size="x-large" :disabled="Boolean(manualControlBusy)" @click="startFlow">Start</v-btn>
         <v-btn
-          color="secondary"
-          variant="tonal"
-          prepend-icon="mdi-arrow-up"
-          :loading="zMoveBusy && zMoveDirection === 'up'"
-          :disabled="zMoveBusy"
-          @click="moveZ('up')"
+          color="error"
+          variant="outlined"
+          prepend-icon="mdi-stop-circle"
+          :loading="isManualActionBusy('stop-all')"
+          @click="emergencyStopAll"
         >
-          Up
-        </v-btn>
-        <v-btn
-          color="secondary"
-          variant="tonal"
-          prepend-icon="mdi-arrow-down"
-          :loading="zMoveBusy && zMoveDirection === 'down'"
-          :disabled="zMoveBusy"
-          @click="moveZ('down')"
-        >
-          Down
+          Stop Everything
         </v-btn>
       </div>
-      <div v-if="zMoveError" class="error-text">{{ zMoveError }}</div>
-      <div v-if="zMoveSuccess" class="secondary-text">{{ zMoveSuccess }}</div>
+
+      <div class="control-grid">
+        <div class="control-group">
+          <div class="control-title">Z-axis</div>
+          <div class="control-buttons">
+            <v-btn :loading="isManualActionBusy('z:1')" :disabled="Boolean(manualControlBusy)" @click="jogZ(1)">+1</v-btn>
+            <v-btn :loading="isManualActionBusy('z:-1')" :disabled="Boolean(manualControlBusy)" @click="jogZ(-1)">-1</v-btn>
+            <v-btn :loading="isManualActionBusy('z:30')" :disabled="Boolean(manualControlBusy)" @click="jogZ(30)">+30</v-btn>
+            <v-btn :loading="isManualActionBusy('z:-30')" :disabled="Boolean(manualControlBusy)" @click="jogZ(-30)">-30</v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">Wrist Servo 1</div>
+          <div class="control-status secondary-text">Huidig: {{ manualStatus.wrist1 ?? "-" }}°</div>
+          <div class="control-buttons">
+            <v-btn :loading="isManualActionBusy('w1:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 1)">+1°</v-btn>
+            <v-btn :loading="isManualActionBusy('w1:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -1)">-1°</v-btn>
+            <v-btn :loading="isManualActionBusy('w1:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 30)">+30°</v-btn>
+            <v-btn :loading="isManualActionBusy('w1:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -30)">-30°</v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">Wrist Servo 2</div>
+          <div class="control-status secondary-text">Huidig: {{ manualStatus.wrist2 ?? "-" }}°</div>
+          <div class="control-buttons">
+            <v-btn :loading="isManualActionBusy('w2:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 1)">+1°</v-btn>
+            <v-btn :loading="isManualActionBusy('w2:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -1)">-1°</v-btn>
+            <v-btn :loading="isManualActionBusy('w2:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 30)">+30°</v-btn>
+            <v-btn :loading="isManualActionBusy('w2:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -30)">-30°</v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">Vacuum 1</div>
+          <div class="control-status secondary-text">
+            Motor: {{ manualStatus.vac1 ? "ON" : "OFF" }} | Valve: {{ manualStatus.valve1 ? "OPEN" : "CLOSED" }}
+          </div>
+          <div class="control-buttons">
+            <v-btn
+              color="success"
+              :loading="isManualActionBusy('vac1:on')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setVacuum(1, true)"
+            >
+              ON
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              :loading="isManualActionBusy('vac1:off')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setVacuum(1, false)"
+            >
+              OFF
+            </v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-title">Vacuum 2</div>
+          <div class="control-status secondary-text">
+            Motor: {{ manualStatus.vac2 ? "ON" : "OFF" }} | Valve: {{ manualStatus.valve2 ? "OPEN" : "CLOSED" }}
+          </div>
+          <div class="control-buttons">
+            <v-btn
+              color="success"
+              :loading="isManualActionBusy('vac2:on')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setVacuum(2, true)"
+            >
+              ON
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              :loading="isManualActionBusy('vac2:off')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setVacuum(2, false)"
+            >
+              OFF
+            </v-btn>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="manualControlError" class="error-text">{{ manualControlError }}</div>
+      <div v-if="manualControlSuccess" class="secondary-text">{{ manualControlSuccess }}</div>
     </template>
 
     <template v-else-if="step === 1">
@@ -254,10 +330,18 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
-      zMoveBusy: false,
-      zMoveDirection: "",
-      zMoveError: "",
-      zMoveSuccess: "",
+      manualControlBusy: "",
+      manualControlError: "",
+      manualControlSuccess: "",
+      manualStatusBusy: false,
+      manualStatus: {
+        wrist1: null,
+        wrist2: null,
+        vac1: false,
+        vac2: false,
+        valve1: false,
+        valve2: false,
+      },
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
   },
@@ -293,6 +377,7 @@ export default {
   mounted() {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
     this.loadRuntimeSettings();
+    this.fetchManualStatus();
   },
   beforeUnmount() {
     clearTimeout(this.timer);
@@ -362,15 +447,41 @@ export default {
         return false;
       }
     },
-    async moveZ(direction) {
-      if (!["up", "down"].includes(direction)) {
-        return;
+    isManualActionBusy(actionKey) {
+      return this.manualControlBusy === actionKey;
+    },
+    parseManualStatusInt(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    },
+    parseManualStatusBool(value) {
+      return String(value ?? "") === "1";
+    },
+    async fetchManualStatus() {
+      this.manualStatusBusy = true;
+      try {
+        const response = await axios.get("/api/arduino/leonardo/status");
+        const status = response.data?.status || {};
+        this.manualStatus = {
+          wrist1: this.parseManualStatusInt(status.wrist1),
+          wrist2: this.parseManualStatusInt(status.wrist2),
+          vac1: this.parseManualStatusBool(status.vac1),
+          vac2: this.parseManualStatusBool(status.vac2),
+          valve1: this.parseManualStatusBool(status.valve1),
+          valve2: this.parseManualStatusBool(status.valve2),
+        };
+      } catch (error) {
+        if (this.step === 0) {
+          this.manualControlError = error?.response?.data?.detail || "Kon Leonardo status niet ophalen.";
+        }
+      } finally {
+        this.manualStatusBusy = false;
       }
-
-      this.zMoveBusy = true;
-      this.zMoveDirection = direction;
-      this.zMoveError = "";
-      this.zMoveSuccess = "";
+    },
+    async runManualAction(actionKey, successMessage, requestFn, refreshStatus = false) {
+      this.manualControlBusy = actionKey;
+      this.manualControlError = "";
+      this.manualControlSuccess = "";
 
       try {
         const stopped = await this.stopStartupTestSpin();
@@ -378,15 +489,46 @@ export default {
           return;
         }
 
-        const endpoint = direction === "up" ? "/api/arduino/grbl/z/up" : "/api/arduino/grbl/z/down";
-        await axios.post(endpoint);
-        this.zMoveSuccess = direction === "up" ? "Z-as omhoog gestuurd." : "Z-as omlaag gestuurd.";
+        await requestFn();
+        this.manualControlSuccess = successMessage;
+        if (refreshStatus) {
+          await this.fetchManualStatus();
+        }
       } catch (error) {
-        this.zMoveError = error?.response?.data?.detail || "Kon Z-as niet bewegen.";
+        this.manualControlError = error?.response?.data?.detail || "Manuele beweging mislukt.";
       } finally {
-        this.zMoveBusy = false;
-        this.zMoveDirection = "";
+        this.manualControlBusy = "";
       }
+    },
+    async jogZ(delta) {
+      const label = delta > 0 ? `Z-as +${delta} gestuurd.` : `Z-as ${delta} gestuurd.`;
+      await this.runManualAction(`z:${delta}`, label, () => axios.post("/api/arduino/grbl/z/jog", { delta }));
+    },
+    async stepWrist(wristIndex, delta) {
+      const label = delta > 0 ? `Wrist ${wristIndex} +${delta}° gestuurd.` : `Wrist ${wristIndex} ${delta}° gestuurd.`;
+      await this.runManualAction(
+        `w${wristIndex}:${delta}`,
+        label,
+        () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }),
+        true
+      );
+    },
+    async setVacuum(vacuumIndex, enabled) {
+      const label = `Vacuum ${vacuumIndex} ${enabled ? "ingeschakeld" : "uitgeschakeld"}.`;
+      await this.runManualAction(
+        `vac${vacuumIndex}:${enabled ? "on" : "off"}`,
+        label,
+        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}`, { enabled }),
+        true
+      );
+    },
+    async emergencyStopAll() {
+      await this.runManualAction(
+        "stop-all",
+        "Alles gestopt.",
+        () => axios.post("/api/arduino/emergency-stop-all"),
+        true
+      );
     },
     async startScanCamera() {
       this.showManualImeiInput = false;
@@ -636,13 +778,13 @@ export default {
       this.sessionId = null;
       this.confirmBusy = false;
       this.testSpinError = "";
-      this.zMoveBusy = false;
-      this.zMoveDirection = "";
-      this.zMoveError = "";
-      this.zMoveSuccess = "";
+      this.manualControlBusy = "";
+      this.manualControlError = "";
+      this.manualControlSuccess = "";
       if (restartTestSpin && this.autoGrblTestSpinOnUiStart) {
         this.beginStartupTestSpin();
       }
+      this.fetchManualStatus();
     },
   },
 };
@@ -697,6 +839,42 @@ export default {
 
 .start-controls {
   align-items: center;
+}
+
+.control-grid {
+  width: 100%;
+  max-width: 1100px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.control-group {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.control-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.control-status {
+  min-height: 22px;
+}
+
+.control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
 }
 
 .manual-imei {

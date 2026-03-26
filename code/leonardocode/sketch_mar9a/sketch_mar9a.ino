@@ -1,29 +1,60 @@
 #include <Servo.h>
 
-Servo motorGate;
-Servo motorTray;
+// =========================
+// Servo objects
+// =========================
+Servo servoGate;        // 360 continuous
+Servo servoPhoneLoader; // 360 continuous
+Servo servoWrist1;      // 180 degree
+Servo servoWrist2;      // 180 degree
 
+// =========================
 // Servo pins
-const int gateServoPin = 9;
-const int trayServoPin = 10;
+// =========================
+const int gateServoPin        = 9;
+const int phoneLoaderServoPin = 10;
+const int wrist1ServoPin      = 11;
+const int wrist2ServoPin      = 12;
 
-// Switches
-const int gateOpenSwitch   = 2;  // C->GND, NC->pin
-const int gateCloseSwitch  = 3;
-const int trayOutSwitch    = 4;
-const int trayInSwitch     = 5;
+// =========================
+// Switches (NC -> INPUT_PULLUP)
+// C -> GND, NC -> pin
+// geraakt = HIGH
+// =========================
+const int gateOpenSwitch  = 2;
+const int gateCloseSwitch = 3;
+const int trayOutSwitch   = 4;
+const int trayInSwitch    = 5;
 
+// =========================
+// MOSFET output pins
+// =========================
+const int vacuumMotor1Pin = 6;
+const int vacuumMotor2Pin = 7;
+const int valve1Pin       = 8;
+const int valve2Pin       = A0;
+
+// =========================
 // Continuous servo values
+// =========================
 const int SERVO_STOP = 90;
 
-// Kalibreer deze waarden indien nodig
-const int GATE_OPEN_SPEED  = 180;
-const int GATE_CLOSE_SPEED = 0;
+// Kalibreer indien nodig
+const int GATE_OPEN_SPEED   = 180;
+const int GATE_CLOSE_SPEED  = 0;
 
-const int TRAY_OUT_SPEED   = 180;
-const int TRAY_IN_SPEED    = 0;
+const int TRAY_OUT_SPEED    = 180;
+const int TRAY_IN_SPEED     = 0;
 
-// State machine
+// =========================
+// Wrist defaults
+// =========================
+int wrist1Angle = 90;
+int wrist2Angle = 90;
+
+// =========================
+// States
+// =========================
 enum GateState {
   GATE_IDLE,
   GATE_OPENING,
@@ -42,88 +73,252 @@ enum GatePosition {
   GATE_DOWN
 };
 
+enum TrayPosition {
+  TRAY_UNKNOWN_POS,
+  TRAY_OUT_POS,
+  TRAY_IN_POS
+};
+
 GateState gateState = GATE_IDLE;
 TrayState trayState = TRAY_IDLE;
 GatePosition gatePosition = GATE_UNKNOWN_POS;
+TrayPosition trayPosition = TRAY_UNKNOWN_POS;
 
+// =========================
+// Setup
+// =========================
 void setup() {
   Serial.begin(115200);
 
-  motorGate.attach(gateServoPin);
-  motorTray.attach(trayServoPin);
+  // Attach servos
+  servoGate.attach(gateServoPin);
+  servoPhoneLoader.attach(phoneLoaderServoPin);
+  servoWrist1.attach(wrist1ServoPin);
+  servoWrist2.attach(wrist2ServoPin);
 
+  // Switches
   pinMode(gateOpenSwitch, INPUT_PULLUP);
   pinMode(gateCloseSwitch, INPUT_PULLUP);
   pinMode(trayOutSwitch, INPUT_PULLUP);
   pinMode(trayInSwitch, INPUT_PULLUP);
 
+  // MOSFET outputs
+  pinMode(vacuumMotor1Pin, OUTPUT);
+  pinMode(vacuumMotor2Pin, OUTPUT);
+  pinMode(valve1Pin, OUTPUT);
+  pinMode(valve2Pin, OUTPUT);
+
+  // Safe startup states
   stopGate();
   stopTray();
 
-  // Bepaal gate-positie bij opstart
+  servoWrist1.write(wrist1Angle);
+  servoWrist2.write(wrist2Angle);
+
+  digitalWrite(vacuumMotor1Pin, LOW);
+  digitalWrite(vacuumMotor2Pin, LOW);
+  digitalWrite(valve1Pin, LOW);
+  digitalWrite(valve2Pin, LOW);
+
   updateGatePositionFromSwitches();
+  updateTrayPositionFromSwitches();
 
   Serial.println("Leonardo ready");
-  printGatePosition();
+  printStatus();
 }
 
+// =========================
+// Main loop
+// =========================
 void loop() {
   handleSerial();
   updateGate();
   updateTray();
 
-  // Hou positie up-to-date als gate stilstaat
   if (gateState == GATE_IDLE) {
     updateGatePositionFromSwitches();
   }
+
+  if (trayState == TRAY_IDLE) {
+    updateTrayPositionFromSwitches();
+  }
 }
 
+// =========================
+// Serial command handling
+// =========================
 void handleSerial() {
   if (!Serial.available()) return;
 
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
 
+  // -------------------------
+  // Gate commands
+  // -------------------------
   if (cmd == "GATE_OPEN") {
     gateState = GATE_OPENING;
-    motorGate.write(GATE_OPEN_SPEED);
-    Serial.println("Gate opening...");
+    servoGate.write(GATE_OPEN_SPEED);
+    Serial.println("GATE_OPENING");
   }
   else if (cmd == "GATE_CLOSE") {
     gateState = GATE_CLOSING;
-    motorGate.write(GATE_CLOSE_SPEED);
-    Serial.println("Gate closing...");
+    servoGate.write(GATE_CLOSE_SPEED);
+    Serial.println("GATE_CLOSING");
   }
-  else if (cmd == "TRAY_OUT") {
-    trayState = TRAY_OPENING;
-    motorTray.write(TRAY_OUT_SPEED);
-    Serial.println("Tray moving out...");
-  }
-  else if (cmd == "TRAY_IN") {
-    trayState = TRAY_CLOSING;
-    motorTray.write(TRAY_IN_SPEED);
-    Serial.println("Tray moving in...");
-  }
-  else if (cmd == "STOP_ALL") {
+  else if (cmd == "GATE_STOP") {
     stopGate();
-    stopTray();
     gateState = GATE_IDLE;
-    trayState = TRAY_IDLE;
     updateGatePositionFromSwitches();
-    Serial.println("All stopped");
-  }
-  else if (cmd == "STATUS") {
-    printStatus();
+    Serial.println("GATE_STOPPED");
   }
   else if (cmd == "GATE_POS") {
     printGatePosition();
   }
+
+  // -------------------------
+  // Tray / phone loader commands
+  // -------------------------
+  else if (cmd == "TRAY_OUT") {
+    trayState = TRAY_OPENING;
+    servoPhoneLoader.write(TRAY_OUT_SPEED);
+    Serial.println("TRAY_MOVING_OUT");
+  }
+  else if (cmd == "TRAY_IN") {
+    trayState = TRAY_CLOSING;
+    servoPhoneLoader.write(TRAY_IN_SPEED);
+    Serial.println("TRAY_MOVING_IN");
+  }
+  else if (cmd == "TRAY_STOP") {
+    stopTray();
+    trayState = TRAY_IDLE;
+    updateTrayPositionFromSwitches();
+    Serial.println("TRAY_STOPPED");
+  }
+
+  // -------------------------
+  // Wrist commands
+  // -------------------------
+  else if (cmd.startsWith("WRIST1_ANGLE:")) {
+    int angle = cmd.substring(String("WRIST1_ANGLE:").length()).toInt();
+    angle = constrain(angle, 0, 180);
+    wrist1Angle = angle;
+    servoWrist1.write(wrist1Angle);
+    Serial.print("WRIST1_DONE:");
+    Serial.println(wrist1Angle);
+  }
+  else if (cmd.startsWith("WRIST2_ANGLE:")) {
+    int angle = cmd.substring(String("WRIST2_ANGLE:").length()).toInt();
+    angle = constrain(angle, 0, 180);
+    wrist2Angle = angle;
+    servoWrist2.write(wrist2Angle);
+    Serial.print("WRIST2_DONE:");
+    Serial.println(wrist2Angle);
+  }
+  else if (cmd == "WRIST_HOME") {
+    wrist1Angle = 90;
+    wrist2Angle = 90;
+    servoWrist1.write(wrist1Angle);
+    servoWrist2.write(wrist2Angle);
+    Serial.println("WRIST_HOME_DONE");
+  }
+
+  // -------------------------
+  // Vacuum motor commands
+  // -------------------------
+  else if (cmd == "VAC1_ON") {
+    digitalWrite(vacuumMotor1Pin, HIGH);
+    Serial.println("VAC1_ON_DONE");
+  }
+  else if (cmd == "VAC1_OFF") {
+    digitalWrite(vacuumMotor1Pin, LOW);
+    Serial.println("VAC1_OFF_DONE");
+  }
+  else if (cmd == "VAC2_ON") {
+    digitalWrite(vacuumMotor2Pin, HIGH);
+    Serial.println("VAC2_ON_DONE");
+  }
+  else if (cmd == "VAC2_OFF") {
+    digitalWrite(vacuumMotor2Pin, LOW);
+    Serial.println("VAC2_OFF_DONE");
+  }
+  else if (cmd == "VAC_ALL_ON") {
+    digitalWrite(vacuumMotor1Pin, HIGH);
+    digitalWrite(vacuumMotor2Pin, HIGH);
+    Serial.println("VAC_ALL_ON_DONE");
+  }
+  else if (cmd == "VAC_ALL_OFF") {
+    digitalWrite(vacuumMotor1Pin, LOW);
+    digitalWrite(vacuumMotor2Pin, LOW);
+    Serial.println("VAC_ALL_OFF_DONE");
+  }
+
+  // -------------------------
+  // Valve commands
+  // -------------------------
+  else if (cmd == "VALVE1_ON") {
+    digitalWrite(valve1Pin, HIGH);
+    Serial.println("VALVE1_ON_DONE");
+  }
+  else if (cmd == "VALVE1_OFF") {
+    digitalWrite(valve1Pin, LOW);
+    Serial.println("VALVE1_OFF_DONE");
+  }
+  else if (cmd == "VALVE2_ON") {
+    digitalWrite(valve2Pin, HIGH);
+    Serial.println("VALVE2_ON_DONE");
+  }
+  else if (cmd == "VALVE2_OFF") {
+    digitalWrite(valve2Pin, LOW);
+    Serial.println("VALVE2_OFF_DONE");
+  }
+  else if (cmd == "VALVE_ALL_ON") {
+    digitalWrite(valve1Pin, HIGH);
+    digitalWrite(valve2Pin, HIGH);
+    Serial.println("VALVE_ALL_ON_DONE");
+  }
+  else if (cmd == "VALVE_ALL_OFF") {
+    digitalWrite(valve1Pin, LOW);
+    digitalWrite(valve2Pin, LOW);
+    Serial.println("VALVE_ALL_OFF_DONE");
+  }
+
+  // -------------------------
+  // Global
+  // -------------------------
+  else if (cmd == "STOP_ALL") {
+    stopGate();
+    stopTray();
+
+    gateState = GATE_IDLE;
+    trayState = TRAY_IDLE;
+
+    digitalWrite(vacuumMotor1Pin, LOW);
+    digitalWrite(vacuumMotor2Pin, LOW);
+    digitalWrite(valve1Pin, LOW);
+    digitalWrite(valve2Pin, LOW);
+
+    updateGatePositionFromSwitches();
+    updateTrayPositionFromSwitches();
+
+    Serial.println("ALL_STOPPED");
+  }
+  else if (cmd == "STATUS") {
+    printStatus();
+  }
+  else {
+    Serial.print("ERROR:UNKNOWN_COMMAND:");
+    Serial.println(cmd);
+  }
 }
 
+// =========================
+// Gate update logic
+// =========================
 void updateGate() {
   switch (gateState) {
     case GATE_OPENING:
-      if (digitalRead(gateOpenSwitch) == HIGH) {   // switch geraakt
+      if (digitalRead(gateOpenSwitch) == HIGH) {
         stopGate();
         gateState = GATE_IDLE;
         gatePosition = GATE_UP;
@@ -147,13 +342,18 @@ void updateGate() {
   }
 }
 
+// =========================
+// Tray update logic
+// =========================
 void updateTray() {
   switch (trayState) {
     case TRAY_OPENING:
       if (digitalRead(trayOutSwitch) == HIGH) {
         stopTray();
         trayState = TRAY_IDLE;
+        trayPosition = TRAY_OUT_POS;
         Serial.println("TRAY_OUT_DONE");
+        printTrayPosition();
       }
       break;
 
@@ -161,7 +361,9 @@ void updateTray() {
       if (digitalRead(trayInSwitch) == HIGH) {
         stopTray();
         trayState = TRAY_IDLE;
+        trayPosition = TRAY_IN_POS;
         Serial.println("TRAY_IN_DONE");
+        printTrayPosition();
       }
       break;
 
@@ -170,14 +372,20 @@ void updateTray() {
   }
 }
 
+// =========================
+// Servo helper functions
+// =========================
 void stopGate() {
-  motorGate.write(SERVO_STOP);
+  servoGate.write(SERVO_STOP);
 }
 
 void stopTray() {
-  motorTray.write(SERVO_STOP);
+  servoPhoneLoader.write(SERVO_STOP);
 }
 
+// =========================
+// Position tracking
+// =========================
 void updateGatePositionFromSwitches() {
   bool openPressed  = (digitalRead(gateOpenSwitch) == HIGH);
   bool closePressed = (digitalRead(gateCloseSwitch) == HIGH);
@@ -189,24 +397,57 @@ void updateGatePositionFromSwitches() {
     gatePosition = GATE_DOWN;
   }
   else if (!openPressed && !closePressed) {
-    // geen switch geraakt -> tussenpositie of onbekend
-    // laat laatste bekende positie staan
+    // tussenpositie of onbekend, laat laatste gekende waarde staan
   }
   else {
-    // beide switches tegelijk geraakt = fout / mechanisch probleem
     gatePosition = GATE_UNKNOWN_POS;
   }
 }
 
+void updateTrayPositionFromSwitches() {
+  bool outPressed = (digitalRead(trayOutSwitch) == HIGH);
+  bool inPressed  = (digitalRead(trayInSwitch) == HIGH);
+
+  if (outPressed && !inPressed) {
+    trayPosition = TRAY_OUT_POS;
+  }
+  else if (!outPressed && inPressed) {
+    trayPosition = TRAY_IN_POS;
+  }
+  else if (!outPressed && !inPressed) {
+    // tussenpositie of onbekend, laat laatste gekende waarde staan
+  }
+  else {
+    trayPosition = TRAY_UNKNOWN_POS;
+  }
+}
+
+// =========================
+// Serial status printers
+// =========================
 void printGatePosition() {
   Serial.print("GATE_POS=");
-
   switch (gatePosition) {
     case GATE_UP:
       Serial.println("UP");
       break;
     case GATE_DOWN:
       Serial.println("DOWN");
+      break;
+    default:
+      Serial.println("UNKNOWN");
+      break;
+  }
+}
+
+void printTrayPosition() {
+  Serial.print("TRAY_POS=");
+  switch (trayPosition) {
+    case TRAY_OUT_POS:
+      Serial.println("OUT");
+      break;
+    case TRAY_IN_POS:
+      Serial.println("IN");
       break;
     default:
       Serial.println("UNKNOWN");
@@ -233,6 +474,37 @@ void printStatus() {
 
   Serial.print(", trayState=");
   Serial.print(trayState);
+
+  Serial.print(", trayPos=");
+  switch (trayPosition) {
+    case TRAY_OUT_POS:
+      Serial.print("OUT");
+      break;
+    case TRAY_IN_POS:
+      Serial.print("IN");
+      break;
+    default:
+      Serial.print("UNKNOWN");
+      break;
+  }
+
+  Serial.print(", wrist1=");
+  Serial.print(wrist1Angle);
+
+  Serial.print(", wrist2=");
+  Serial.print(wrist2Angle);
+
+  Serial.print(", vac1=");
+  Serial.print(digitalRead(vacuumMotor1Pin));
+
+  Serial.print(", vac2=");
+  Serial.print(digitalRead(vacuumMotor2Pin));
+
+  Serial.print(", valve1=");
+  Serial.print(digitalRead(valve1Pin));
+
+  Serial.print(", valve2=");
+  Serial.print(digitalRead(valve2Pin));
 
   Serial.print(", gateOpenSw=");
   Serial.print(digitalRead(gateOpenSwitch));

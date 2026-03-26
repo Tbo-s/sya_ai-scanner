@@ -10,6 +10,7 @@ from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     is_safe_grbl_command as service_is_safe_grbl_command,
     manual_z_down,
+    manual_z_move,
     manual_z_up,
     run_postflow_sequence,
     start_test_spin,
@@ -17,12 +18,17 @@ from services.grbl_service import (
     send_grbl,
 )
 from services.machine_service import (
+    adjust_wrist1 as machine_adjust_wrist1,
+    adjust_wrist2 as machine_adjust_wrist2,
     close_gate as machine_close_gate,
     emergency_stop as machine_emergency_stop,
     get_gate_position as machine_get_gate_position,
+    get_status as machine_get_status,
     get_tray_position as machine_get_tray_position,
     home_machine as machine_home_machine,
     open_gate as machine_open_gate,
+    set_vacuum1 as machine_set_vacuum1,
+    set_vacuum2 as machine_set_vacuum2,
     tray_in as machine_tray_in,
     tray_out as machine_tray_out,
 )
@@ -43,8 +49,21 @@ class GrblCommand(BaseModel):
 class GateCommand(BaseModel):
     command: str = Field(min_length=1)
 
+
 class TrayCommand(BaseModel):
     command: str = Field(min_length=1)
+
+
+class AngleDeltaCommand(BaseModel):
+    delta: int = Field(ge=-180, le=180)
+
+
+class ToggleState(BaseModel):
+    enabled: bool
+
+
+class ZJogCommand(BaseModel):
+    delta: float = Field(ge=-1000, le=1000)
 
 
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
@@ -287,6 +306,39 @@ def emergency_stop_leonardo_machine():
     return machine_emergency_stop()
 
 
+@router.post("/arduino/emergency-stop-all", tags=["Arduino"])
+def emergency_stop_all():
+    return {
+        "leonardo": machine_emergency_stop(),
+        "grbl": _send_grbl("!", wait_for_ok=False),
+    }
+
+
+@router.get("/arduino/leonardo/status", tags=["Arduino"])
+def get_leonardo_status():
+    return machine_get_status()
+
+
+@router.post("/arduino/leonardo/wrist1/step", tags=["Arduino"])
+def step_leonardo_wrist1(payload: AngleDeltaCommand):
+    return machine_adjust_wrist1(payload.delta)
+
+
+@router.post("/arduino/leonardo/wrist2/step", tags=["Arduino"])
+def step_leonardo_wrist2(payload: AngleDeltaCommand):
+    return machine_adjust_wrist2(payload.delta)
+
+
+@router.post("/arduino/leonardo/vacuum1", tags=["Arduino"])
+def set_leonardo_vacuum1(payload: ToggleState):
+    return machine_set_vacuum1(payload.enabled)
+
+
+@router.post("/arduino/leonardo/vacuum2", tags=["Arduino"])
+def set_leonardo_vacuum2(payload: ToggleState):
+    return machine_set_vacuum2(payload.enabled)
+
+
 @router.post("/arduino/grbl/command", tags=["Arduino"])
 def grbl_command(payload: GrblCommand):
     return _send_grbl(payload.command, wait_for_ok=payload.wait_for_ok)
@@ -316,6 +368,11 @@ def grbl_z_up():
 @router.post("/arduino/grbl/z/down", tags=["Arduino"])
 def grbl_z_down():
     return manual_z_down()
+
+
+@router.post("/arduino/grbl/z/jog", tags=["Arduino"])
+def grbl_z_jog(payload: ZJogCommand):
+    return manual_z_move(payload.delta)
 
 
 @router.post("/arduino/grbl/post-flow", tags=["Arduino"])
