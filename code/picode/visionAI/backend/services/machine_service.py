@@ -23,6 +23,10 @@ def _get_leonardo_read_timeout_s() -> float:
     return float(os.getenv("APP_LEONARDO_READ_TIMEOUT_S", "1.5"))
 
 
+def _get_leonardo_open_delay_s() -> float:
+    return max(0.0, float(os.getenv("APP_LEONARDO_OPEN_DELAY_S", "0.35")))
+
+
 def _get_wrist_dwell_ms() -> int:
     return int(os.getenv("APP_WRIST_DWELL_MS", "600"))
 
@@ -40,6 +44,11 @@ def _send_line(line: str):
     baudrate = _get_leonardo_baud()
     try:
         with serial.Serial(port, baudrate, timeout=1) as ser:
+            open_delay_s = _get_leonardo_open_delay_s()
+            if open_delay_s > 0:
+                time.sleep(open_delay_s)
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
             ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
     except Exception as exc:
         raise HTTPException(
@@ -54,6 +63,9 @@ def _send_with_response(command: str, timeout_s: Optional[float] = None) -> list
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
     try:
         with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            open_delay_s = _get_leonardo_open_delay_s()
+            if open_delay_s > 0:
+                time.sleep(open_delay_s)
             if hasattr(ser, "reset_input_buffer"):
                 ser.reset_input_buffer()
             ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
@@ -129,6 +141,9 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
     try:
         with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            open_delay_s = _get_leonardo_open_delay_s()
+            if open_delay_s > 0:
+                time.sleep(open_delay_s)
             if hasattr(ser, "reset_input_buffer"):
                 ser.reset_input_buffer()
 
@@ -308,7 +323,7 @@ def _set_binary_output(
 ) -> dict:
     command = command_on if enabled else command_off
     expected = done_on if enabled else done_off
-    lines = _send_with_response(command, timeout_s=0.4)
+    lines = _send_with_response(command)
     done = _contains_token(lines, expected)
     if raise_on_no_ack:
         return _require_done(command, done, lines) | {"enabled": enabled}
@@ -435,6 +450,9 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
     baudrate = _get_leonardo_baud()
     try:
         with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            open_delay_s = _get_leonardo_open_delay_s()
+            if open_delay_s > 0:
+                time.sleep(open_delay_s)
             if hasattr(ser, "reset_input_buffer"):
                 ser.reset_input_buffer()
 
