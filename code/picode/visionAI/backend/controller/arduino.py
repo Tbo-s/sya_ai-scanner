@@ -27,8 +27,10 @@ from services.machine_service import (
     get_tray_position as machine_get_tray_position,
     home_machine as machine_home_machine,
     open_gate as machine_open_gate,
-    set_vacuum1 as machine_set_vacuum1,
-    set_vacuum2 as machine_set_vacuum2,
+    set_valve1 as machine_set_valve1,
+    set_valve2 as machine_set_valve2,
+    set_vacuum1_motor as machine_set_vacuum1_motor,
+    set_vacuum2_motor as machine_set_vacuum2_motor,
     tray_in as machine_tray_in,
     tray_out as machine_tray_out,
 )
@@ -329,14 +331,24 @@ def step_leonardo_wrist2(payload: AngleDeltaCommand):
     return machine_adjust_wrist2(payload.delta)
 
 
-@router.post("/arduino/leonardo/vacuum1", tags=["Arduino"])
-def set_leonardo_vacuum1(payload: ToggleState):
-    return machine_set_vacuum1(payload.enabled)
+@router.post("/arduino/leonardo/vacuum1/motor", tags=["Arduino"])
+def set_leonardo_vacuum1_motor(payload: ToggleState):
+    return machine_set_vacuum1_motor(payload.enabled)
 
 
-@router.post("/arduino/leonardo/vacuum2", tags=["Arduino"])
-def set_leonardo_vacuum2(payload: ToggleState):
-    return machine_set_vacuum2(payload.enabled)
+@router.post("/arduino/leonardo/vacuum1/valve", tags=["Arduino"])
+def set_leonardo_vacuum1_valve(payload: ToggleState):
+    return machine_set_valve1(payload.enabled)
+
+
+@router.post("/arduino/leonardo/vacuum2/motor", tags=["Arduino"])
+def set_leonardo_vacuum2_motor(payload: ToggleState):
+    return machine_set_vacuum2_motor(payload.enabled)
+
+
+@router.post("/arduino/leonardo/vacuum2/valve", tags=["Arduino"])
+def set_leonardo_vacuum2_valve(payload: ToggleState):
+    return machine_set_valve2(payload.enabled)
 
 
 @router.post("/arduino/grbl/command", tags=["Arduino"])

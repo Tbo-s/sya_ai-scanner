@@ -254,6 +254,68 @@ def vacuum_off(raise_on_no_ack: bool = True) -> dict:
     return {"command": "VAC_ALL_OFF+VALVE_ALL_OFF", "sent": True, "ack": done, "response": lines, "results": results}
 
 
+def _set_binary_output(
+    *,
+    command_on: str,
+    command_off: str,
+    done_on: str,
+    done_off: str,
+    enabled: bool,
+    raise_on_no_ack: bool = True,
+) -> dict:
+    command = command_on if enabled else command_off
+    expected = done_on if enabled else done_off
+    lines = _send_with_response(command, timeout_s=0.4)
+    done = _contains_token(lines, expected)
+    if raise_on_no_ack:
+        return _require_done(command, done, lines) | {"enabled": enabled}
+    return {"command": command, "sent": True, "ack": done, "enabled": enabled, "response": lines}
+
+
+def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    return _set_binary_output(
+        command_on="VAC1_ON",
+        command_off="VAC1_OFF",
+        done_on="VAC1_ON_DONE",
+        done_off="VAC1_OFF_DONE",
+        enabled=enabled,
+        raise_on_no_ack=raise_on_no_ack,
+    )
+
+
+def set_vacuum2_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    return _set_binary_output(
+        command_on="VAC2_ON",
+        command_off="VAC2_OFF",
+        done_on="VAC2_ON_DONE",
+        done_off="VAC2_OFF_DONE",
+        enabled=enabled,
+        raise_on_no_ack=raise_on_no_ack,
+    )
+
+
+def set_valve1(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    return _set_binary_output(
+        command_on="VALVE1_ON",
+        command_off="VALVE1_OFF",
+        done_on="VALVE1_ON_DONE",
+        done_off="VALVE1_OFF_DONE",
+        enabled=enabled,
+        raise_on_no_ack=raise_on_no_ack,
+    )
+
+
+def set_valve2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+    return _set_binary_output(
+        command_on="VALVE2_ON",
+        command_off="VALVE2_OFF",
+        done_on="VALVE2_ON_DONE",
+        done_off="VALVE2_OFF_DONE",
+        enabled=enabled,
+        raise_on_no_ack=raise_on_no_ack,
+    )
+
+
 def set_vacuum1(enabled: bool, raise_on_no_ack: bool = True) -> dict:
     commands = ["VAC1_ON", "VALVE1_ON"] if enabled else ["VAC1_OFF", "VALVE1_OFF"]
     expected = ["VAC1_ON_DONE", "VALVE1_ON_DONE"] if enabled else ["VAC1_OFF_DONE", "VALVE1_OFF_DONE"]

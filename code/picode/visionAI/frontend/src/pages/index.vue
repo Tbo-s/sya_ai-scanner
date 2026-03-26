@@ -59,52 +59,88 @@
 
         <div class="control-group">
           <div class="control-title">Vacuum 1</div>
-          <div class="control-status secondary-text">
-            Motor: {{ manualStatus.vac1 ? "ON" : "OFF" }} | Valve: {{ manualStatus.valve1 ? "OPEN" : "CLOSED" }}
-          </div>
+          <div class="control-status secondary-text">Motor: {{ manualStatus.vac1 ? "ON" : "OFF" }}</div>
           <div class="control-buttons">
             <v-btn
               color="success"
-              :loading="isManualActionBusy('vac1:on')"
+              :loading="isManualActionBusy('vac1:motor:on')"
               :disabled="Boolean(manualControlBusy)"
-              @click="setVacuum(1, true)"
+              @click="setVacuumMotor(1, true)"
             >
               ON
             </v-btn>
             <v-btn
               color="secondary"
               variant="tonal"
-              :loading="isManualActionBusy('vac1:off')"
+              :loading="isManualActionBusy('vac1:motor:off')"
               :disabled="Boolean(manualControlBusy)"
-              @click="setVacuum(1, false)"
+              @click="setVacuumMotor(1, false)"
             >
               OFF
+            </v-btn>
+          </div>
+          <div class="control-status secondary-text">Valve: {{ manualStatus.valve1 ? "OPEN" : "CLOSED" }}</div>
+          <div class="control-buttons">
+            <v-btn
+              color="info"
+              :loading="isManualActionBusy('vac1:valve:on')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setValve(1, true)"
+            >
+              OPEN
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              :loading="isManualActionBusy('vac1:valve:off')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setValve(1, false)"
+            >
+              CLOSE
             </v-btn>
           </div>
         </div>
 
         <div class="control-group">
           <div class="control-title">Vacuum 2</div>
-          <div class="control-status secondary-text">
-            Motor: {{ manualStatus.vac2 ? "ON" : "OFF" }} | Valve: {{ manualStatus.valve2 ? "OPEN" : "CLOSED" }}
-          </div>
+          <div class="control-status secondary-text">Motor: {{ manualStatus.vac2 ? "ON" : "OFF" }}</div>
           <div class="control-buttons">
             <v-btn
               color="success"
-              :loading="isManualActionBusy('vac2:on')"
+              :loading="isManualActionBusy('vac2:motor:on')"
               :disabled="Boolean(manualControlBusy)"
-              @click="setVacuum(2, true)"
+              @click="setVacuumMotor(2, true)"
             >
               ON
             </v-btn>
             <v-btn
               color="secondary"
               variant="tonal"
-              :loading="isManualActionBusy('vac2:off')"
+              :loading="isManualActionBusy('vac2:motor:off')"
               :disabled="Boolean(manualControlBusy)"
-              @click="setVacuum(2, false)"
+              @click="setVacuumMotor(2, false)"
             >
               OFF
+            </v-btn>
+          </div>
+          <div class="control-status secondary-text">Valve: {{ manualStatus.valve2 ? "OPEN" : "CLOSED" }}</div>
+          <div class="control-buttons">
+            <v-btn
+              color="info"
+              :loading="isManualActionBusy('vac2:valve:on')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setValve(2, true)"
+            >
+              OPEN
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              :loading="isManualActionBusy('vac2:valve:off')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setValve(2, false)"
+            >
+              CLOSE
             </v-btn>
           </div>
         </div>
@@ -513,12 +549,21 @@ export default {
         true
       );
     },
-    async setVacuum(vacuumIndex, enabled) {
-      const label = `Vacuum ${vacuumIndex} ${enabled ? "ingeschakeld" : "uitgeschakeld"}.`;
+    async setVacuumMotor(vacuumIndex, enabled) {
+      const label = `Vacuum motor ${vacuumIndex} ${enabled ? "ingeschakeld" : "uitgeschakeld"}.`;
       await this.runManualAction(
-        `vac${vacuumIndex}:${enabled ? "on" : "off"}`,
+        `vac${vacuumIndex}:motor:${enabled ? "on" : "off"}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}`, { enabled }),
+        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }),
+        true
+      );
+    },
+    async setValve(vacuumIndex, enabled) {
+      const label = `Valve ${vacuumIndex} ${enabled ? "geopend" : "gesloten"}.`;
+      await this.runManualAction(
+        `vac${vacuumIndex}:valve:${enabled ? "on" : "off"}`,
+        label,
+        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }),
         true
       );
     },
