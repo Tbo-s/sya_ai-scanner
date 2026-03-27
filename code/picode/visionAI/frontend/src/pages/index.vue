@@ -37,7 +37,9 @@
 
         <div class="control-group">
           <div class="control-title">Wrist Servo 1</div>
-          <div class="control-status secondary-text">Huidig: {{ manualStatus.wrist1 ?? "-" }}°</div>
+          <div class="control-status secondary-text">
+            Logisch: {{ manualStatus.wrist1 ?? "-" }}° | Fysiek: {{ manualStatus.wrist1Physical ?? "-" }}°
+          </div>
           <div class="control-buttons">
             <v-btn :loading="isManualActionBusy('w1:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 1)">+1°</v-btn>
             <v-btn :loading="isManualActionBusy('w1:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -1)">-1°</v-btn>
@@ -50,7 +52,9 @@
 
         <div class="control-group">
           <div class="control-title">Wrist Servo 2</div>
-          <div class="control-status secondary-text">Huidig: {{ manualStatus.wrist2 ?? "-" }}°</div>
+          <div class="control-status secondary-text">
+            Logisch: {{ manualStatus.wrist2 ?? "-" }}° | Fysiek: {{ manualStatus.wrist2Physical ?? "-" }}°
+          </div>
           <div class="control-buttons">
             <v-btn :loading="isManualActionBusy('w2:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 1)">+1°</v-btn>
             <v-btn :loading="isManualActionBusy('w2:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -1)">-1°</v-btn>
@@ -377,6 +381,8 @@ export default {
       manualStatus: {
         wrist1: null,
         wrist2: null,
+        wrist1Physical: null,
+        wrist2Physical: null,
         vac1: false,
         vac2: false,
         valve1: false,
@@ -505,6 +511,8 @@ export default {
         this.manualStatus = {
           wrist1: this.parseManualStatusInt(status.wrist1),
           wrist2: this.parseManualStatusInt(status.wrist2),
+          wrist1Physical: this.parseManualStatusInt(status.wrist1_physical),
+          wrist2Physical: this.parseManualStatusInt(status.wrist2_physical),
           vac1: this.parseManualStatusBool(status.vac1),
           vac2: this.parseManualStatusBool(status.vac2),
           valve1: this.parseManualStatusBool(status.valve1),

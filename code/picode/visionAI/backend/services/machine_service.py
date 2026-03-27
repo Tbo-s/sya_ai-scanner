@@ -112,6 +112,24 @@ def _parse_status_values(status_line: str) -> dict[str, str]:
     return values
 
 
+def _normalize_status_values(values: dict[str, str]) -> dict[str, str]:
+    normalized = dict(values)
+    for wrist_index in (1, 2):
+        legacy_key = f"wrist{wrist_index}"
+        logical_key = f"wrist{wrist_index}_logical"
+        physical_key = f"wrist{wrist_index}_physical"
+
+        if logical_key in normalized and legacy_key not in normalized:
+            normalized[legacy_key] = normalized[logical_key]
+        elif legacy_key in normalized and logical_key not in normalized:
+            normalized[logical_key] = normalized[legacy_key]
+
+        if physical_key not in normalized and legacy_key in normalized:
+            normalized[physical_key] = normalized[legacy_key]
+
+    return normalized
+
+
 def _derive_tray_position_from_status(values: dict[str, str]) -> str:
     tray_out_sw = values.get("trayOutSw")
     tray_in_sw = values.get("trayInSw")
@@ -196,7 +214,7 @@ def _get_status_values() -> tuple[dict[str, str], list[str]]:
     status_line = _extract_status_line(lines)
     if not status_line:
         raise HTTPException(status_code=504, detail="STATUS did not return a parseable status line.")
-    return _parse_status_values(status_line), lines
+    return _normalize_status_values(_parse_status_values(status_line)), lines
 
 
 def _get_status_int(values: dict[str, str], key: str, default: int) -> int:
