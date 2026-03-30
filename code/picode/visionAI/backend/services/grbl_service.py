@@ -58,11 +58,11 @@ def _get_manual_z_feed_rate() -> int:
 
 
 def _get_manual_xy_step() -> float:
-    return float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "4.0"))
+    return float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "1.0"))
 
 
 def _get_manual_xy_feed_rate() -> int:
-    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "300"))
+    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120"))
 
 
 def is_safe_grbl_command(command: str) -> bool:

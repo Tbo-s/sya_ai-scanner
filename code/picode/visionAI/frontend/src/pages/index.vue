@@ -392,7 +392,7 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
-      manualXyStep: 4,
+      manualXyStep: 1,
       manualControlBusy: "",
       manualControlError: "",
       manualControlSuccess: "",
@@ -456,10 +456,10 @@ export default {
       try {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
-        this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 4);
+        this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 1);
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
-        this.manualXyStep = 4;
+        this.manualXyStep = 1;
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
