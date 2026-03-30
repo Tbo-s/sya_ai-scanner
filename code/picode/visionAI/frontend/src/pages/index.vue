@@ -26,6 +26,24 @@
 
       <div class="control-grid">
         <div class="control-group">
+          <div class="control-title">XY-axis</div>
+          <div class="control-buttons">
+            <v-btn :loading="isManualActionBusy('xy:left')" :disabled="Boolean(manualControlBusy)" @click="jogXY(-manualXyStep, 0, 'Arm links gestuurd.')">
+              Left
+            </v-btn>
+            <v-btn :loading="isManualActionBusy('xy:right')" :disabled="Boolean(manualControlBusy)" @click="jogXY(manualXyStep, 0, 'Arm rechts gestuurd.')">
+              Right
+            </v-btn>
+            <v-btn :loading="isManualActionBusy('xy:forward')" :disabled="Boolean(manualControlBusy)" @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.')">
+              Forward
+            </v-btn>
+            <v-btn :loading="isManualActionBusy('xy:back')" :disabled="Boolean(manualControlBusy)" @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.')">
+              Back
+            </v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
           <div class="control-title">Z-axis</div>
           <div class="control-buttons">
             <v-btn :loading="isManualActionBusy('z:1')" :disabled="Boolean(manualControlBusy)" @click="jogZ(1)">+1</v-btn>
@@ -374,6 +392,7 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
+      manualXyStep: 10,
       manualControlBusy: "",
       manualControlError: "",
       manualControlSuccess: "",
@@ -437,8 +456,10 @@ export default {
       try {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
+        this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 10);
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
+        this.manualXyStep = 10;
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
@@ -551,6 +572,13 @@ export default {
     async jogZ(delta) {
       const label = delta > 0 ? `Z-as +${delta} gestuurd.` : `Z-as ${delta} gestuurd.`;
       await this.runManualAction(`z:${delta}`, label, () => axios.post("/api/arduino/grbl/z/jog", { delta }));
+    },
+    async jogXY(deltaX, deltaY, label) {
+      await this.runManualAction(
+        `xy:${deltaX}:${deltaY}`,
+        label,
+        () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY })
+      );
     },
     async stepWrist(wristIndex, delta) {
       const label = delta > 0 ? `Wrist ${wristIndex} +${delta}° gestuurd.` : `Wrist ${wristIndex} ${delta}° gestuurd.`;

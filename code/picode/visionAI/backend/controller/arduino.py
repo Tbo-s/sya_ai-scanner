@@ -9,6 +9,7 @@ import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     is_safe_grbl_command as service_is_safe_grbl_command,
+    manual_xy_move,
     manual_z_down,
     manual_z_move,
     manual_z_up,
@@ -66,6 +67,11 @@ class ToggleState(BaseModel):
 
 class ZJogCommand(BaseModel):
     delta: float = Field(ge=-1000, le=1000)
+
+
+class XYJogCommand(BaseModel):
+    x: float = Field(ge=-1000, le=1000)
+    y: float = Field(ge=-1000, le=1000)
 
 
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
@@ -385,6 +391,11 @@ def grbl_z_down():
 @router.post("/arduino/grbl/z/jog", tags=["Arduino"])
 def grbl_z_jog(payload: ZJogCommand):
     return manual_z_move(payload.delta)
+
+
+@router.post("/arduino/grbl/xy/jog", tags=["Arduino"])
+def grbl_xy_jog(payload: XYJogCommand):
+    return manual_xy_move(payload.x, payload.y)
 
 
 @router.post("/arduino/grbl/post-flow", tags=["Arduino"])

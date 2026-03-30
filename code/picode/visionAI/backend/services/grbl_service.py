@@ -57,6 +57,14 @@ def _get_manual_z_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_MANUAL_Z_FEED_RATE", "120"))
 
 
+def _get_manual_xy_step() -> float:
+    return float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "10.0"))
+
+
+def _get_manual_xy_feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "300"))
+
+
 def is_safe_grbl_command(command: str) -> bool:
     command = command.strip()
     if not command:
@@ -208,6 +216,20 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
     }
 
 
+def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
+    feed_rate = _get_manual_xy_feed_rate()
+    return {
+        "action": action,
+        "results": _run_grbl_commands(
+            [
+                ("G91", True),
+                (f"G1 X{delta_x} Y{delta_y} F{feed_rate}", True),
+                ("G90", True),
+            ]
+        ),
+    }
+
+
 def z_up() -> dict[str, Any]:
     return _move_z_absolute(float(os.getenv("APP_GRBL_Z_PICKUP", "30.0")), "z_up")
 
@@ -226,6 +248,26 @@ def manual_z_down() -> dict[str, Any]:
 
 def manual_z_move(delta_z: float) -> dict[str, Any]:
     return _jog_z(float(delta_z), "manual_z_move")
+
+
+def manual_xy_left() -> dict[str, Any]:
+    return _jog_xy(-abs(_get_manual_xy_step()), 0.0, "manual_xy_left")
+
+
+def manual_xy_right() -> dict[str, Any]:
+    return _jog_xy(abs(_get_manual_xy_step()), 0.0, "manual_xy_right")
+
+
+def manual_xy_forward() -> dict[str, Any]:
+    return _jog_xy(0.0, abs(_get_manual_xy_step()), "manual_xy_forward")
+
+
+def manual_xy_back() -> dict[str, Any]:
+    return _jog_xy(0.0, -abs(_get_manual_xy_step()), "manual_xy_back")
+
+
+def manual_xy_move(delta_x: float, delta_y: float) -> dict[str, Any]:
+    return _jog_xy(float(delta_x), float(delta_y), "manual_xy_move")
 
 
 def feed_hold() -> dict[str, Any]:
