@@ -47,27 +47,10 @@ const int TRAY_OUT_SPEED    = 180;
 const int TRAY_IN_SPEED     = 0;
 
 // =========================
-// Wrist calibration
+// Wrist defaults
 // =========================
-// Jij gaf aan:
-// logisch 180 -> fysiek 175
-// logisch 90  -> fysiek 85
-// logisch 0   -> fysiek -5 (dus softwarematig clamp naar 0)
-//
-// Dus offset = -5
-const int WRIST1_OFFSET = -5;
-const int WRIST2_OFFSET = -5;
-
-// Logische vaste posities
-const int WRIST_LEFT_ANGLE   = 0;
-const int WRIST_CENTER_ANGLE = 90;
-const int WRIST_RIGHT_ANGLE  = 180;
-
-// =========================
-// Wrist defaults (logische hoeken)
-// =========================
-int wrist1Angle = WRIST_CENTER_ANGLE;
-int wrist2Angle = WRIST_CENTER_ANGLE;
+int wrist1Angle = 90;
+int wrist2Angle = 90;
 
 // =========================
 // States
@@ -243,34 +226,34 @@ void handleSerial() {
     Serial.println(wrist2Angle);
   }
   else if (cmd == "WRIST_HOME") {
-    setWrist1Angle(WRIST_CENTER_ANGLE);
-    setWrist2Angle(WRIST_CENTER_ANGLE);
+    setWrist1Angle(90);
+    setWrist2Angle(90);
     Serial.println("WRIST_HOME_DONE");
   }
 
   // Handige vaste posities
   else if (cmd == "WRIST1_LEFT") {
-    setWrist1Angle(WRIST_LEFT_ANGLE);
+    setWrist1Angle(0);
     Serial.println("WRIST1_LEFT_DONE");
   }
   else if (cmd == "WRIST1_CENTER") {
-    setWrist1Angle(WRIST_CENTER_ANGLE);
+    setWrist1Angle(90);
     Serial.println("WRIST1_CENTER_DONE");
   }
   else if (cmd == "WRIST1_RIGHT") {
-    setWrist1Angle(WRIST_RIGHT_ANGLE);
+    setWrist1Angle(180);
     Serial.println("WRIST1_RIGHT_DONE");
   }
   else if (cmd == "WRIST2_LEFT") {
-    setWrist2Angle(WRIST_LEFT_ANGLE);
+    setWrist2Angle(0);
     Serial.println("WRIST2_LEFT_DONE");
   }
   else if (cmd == "WRIST2_CENTER") {
-    setWrist2Angle(WRIST_CENTER_ANGLE);
+    setWrist2Angle(90);
     Serial.println("WRIST2_CENTER_DONE");
   }
   else if (cmd == "WRIST2_RIGHT") {
-    setWrist2Angle(WRIST_RIGHT_ANGLE);
+    setWrist2Angle(180);
     Serial.println("WRIST2_RIGHT_DONE");
   }
 
@@ -436,14 +419,12 @@ void stopTray() {
 
 void setWrist1Angle(int logicalAngle) {
   wrist1Angle = constrain(logicalAngle, 0, 180);
-  int physicalAngle = constrain(wrist1Angle + WRIST1_OFFSET, 0, 180);
-  servoWrist1.write(physicalAngle);
+  servoWrist1.write(wrist1Angle);
 }
 
 void setWrist2Angle(int logicalAngle) {
   wrist2Angle = constrain(logicalAngle, 0, 180);
-  int physicalAngle = constrain(wrist2Angle + WRIST2_OFFSET, 0, 180);
-  servoWrist2.write(physicalAngle);
+  servoWrist2.write(wrist2Angle);
 }
 
 // =========================
@@ -551,15 +532,11 @@ void printStatus() {
       break;
   }
 
-  Serial.print(", wrist1_logical=");
+  Serial.print(", wrist1=");
   Serial.print(wrist1Angle);
-  Serial.print(", wrist1_physical=");
-  Serial.print(constrain(wrist1Angle + WRIST1_OFFSET, 0, 180));
 
-  Serial.print(", wrist2_logical=");
+  Serial.print(", wrist2=");
   Serial.print(wrist2Angle);
-  Serial.print(", wrist2_physical=");
-  Serial.print(constrain(wrist2Angle + WRIST2_OFFSET, 0, 180));
 
   Serial.print(", vac1=");
   Serial.print(digitalRead(vacuumMotor1Pin));
