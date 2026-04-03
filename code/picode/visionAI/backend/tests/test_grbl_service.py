@@ -1,3 +1,5 @@
+import pytest
+
 import services.grbl_service as grbl_service
 from services.grbl_service import _parse_sequence, is_safe_grbl_command, manual_z_down, manual_z_up, z_down, z_up
 
@@ -92,3 +94,58 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
 
     assert result["action"] == "manual_z_down"
     assert commands == [("G91", True), ("G1 Z-0.75 F60", True), ("G90", True)]
+
+
+def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "150")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    result = grbl_service.manual_xy_move(1.0, 0.0)
+
+    assert result["action"] == "manual_xy_move"
+    assert commands == [("G91", True), ("G1 X1.0 F150", True), ("G90", True)]
+
+
+def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "150")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    result = grbl_service.manual_xy_move(0.0, -2.5)
+
+    assert result["action"] == "manual_xy_move"
+    assert commands == [("G91", True), ("G1 Y-2.5 F150", True), ("G90", True)]
+
+
+def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "200")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    result = grbl_service.manual_xy_move(1.0, -2.0)
+
+    assert result["action"] == "manual_xy_move"
+    assert commands == [("G91", True), ("G1 X1.0 Y-2.0 F200", True), ("G90", True)]
+
+
+def test_manual_xy_move_rejects_zero_delta():
+    with pytest.raises(grbl_service.HTTPException) as exc_info:
+        grbl_service.manual_xy_move(0.0, 0.0)
+
+    assert exc_info.value.status_code == 400

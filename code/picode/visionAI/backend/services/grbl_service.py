@@ -216,6 +216,20 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
     }
 
 
+def _format_xy_jog_command(delta_x: float, delta_y: float, feed_rate: int) -> str:
+    axis_parts = []
+
+    if abs(delta_x) > 1e-9:
+        axis_parts.append(f"X{delta_x}")
+    if abs(delta_y) > 1e-9:
+        axis_parts.append(f"Y{delta_y}")
+
+    if not axis_parts:
+        raise HTTPException(status_code=400, detail="At least one XY jog delta must be non-zero.")
+
+    return f"G1 {' '.join(axis_parts)} F{feed_rate}"
+
+
 def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
     feed_rate = _get_manual_xy_feed_rate()
     return {
@@ -223,7 +237,7 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
         "results": _run_grbl_commands(
             [
                 ("G91", True),
-                (f"G1 X{delta_x} Y{delta_y} F{feed_rate}", True),
+                (_format_xy_jog_command(delta_x, delta_y, feed_rate), True),
                 ("G90", True),
             ]
         ),

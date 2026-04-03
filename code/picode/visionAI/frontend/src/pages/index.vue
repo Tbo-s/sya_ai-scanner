@@ -27,19 +27,59 @@
       <div class="control-grid">
         <div class="control-group">
           <div class="control-title">XY-axis</div>
-          <div class="control-buttons">
-            <v-btn :loading="isManualActionBusy('xy:left')" :disabled="Boolean(manualControlBusy)" @click="jogXY(-manualXyStep, 0, 'Arm links gestuurd.')">
-              Left
+          <div class="control-status secondary-text">{{ manualXyStep }} mm per tik</div>
+          <div class="joystick-control" aria-label="XY-arm bediening">
+            <div class="joystick-cell" />
+            <v-btn
+              class="joystick-btn"
+              icon
+              size="x-large"
+              :loading="isManualActionBusy('xy:forward')"
+              :disabled="Boolean(manualControlBusy)"
+              aria-label="Arm naar voren"
+              @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.')"
+            >
+              <v-icon>mdi-arrow-up</v-icon>
             </v-btn>
-            <v-btn :loading="isManualActionBusy('xy:right')" :disabled="Boolean(manualControlBusy)" @click="jogXY(manualXyStep, 0, 'Arm rechts gestuurd.')">
-              Right
+            <div class="joystick-cell" />
+
+            <v-btn
+              class="joystick-btn"
+              icon
+              size="x-large"
+              :loading="isManualActionBusy('xy:left')"
+              :disabled="Boolean(manualControlBusy)"
+              aria-label="Arm naar links"
+              @click="jogXY(-manualXyStep, 0, 'Arm links gestuurd.')"
+            >
+              <v-icon>mdi-arrow-left</v-icon>
             </v-btn>
-            <v-btn :loading="isManualActionBusy('xy:forward')" :disabled="Boolean(manualControlBusy)" @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.')">
-              Forward
+            <div class="joystick-center" aria-hidden="true" />
+            <v-btn
+              class="joystick-btn"
+              icon
+              size="x-large"
+              :loading="isManualActionBusy('xy:right')"
+              :disabled="Boolean(manualControlBusy)"
+              aria-label="Arm naar rechts"
+              @click="jogXY(manualXyStep, 0, 'Arm rechts gestuurd.')"
+            >
+              <v-icon>mdi-arrow-right</v-icon>
             </v-btn>
-            <v-btn :loading="isManualActionBusy('xy:back')" :disabled="Boolean(manualControlBusy)" @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.')">
-              Back
+
+            <div class="joystick-cell" />
+            <v-btn
+              class="joystick-btn"
+              icon
+              size="x-large"
+              :loading="isManualActionBusy('xy:back')"
+              :disabled="Boolean(manualControlBusy)"
+              aria-label="Arm naar achter"
+              @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.')"
+            >
+              <v-icon>mdi-arrow-down</v-icon>
             </v-btn>
+            <div class="joystick-cell" />
           </div>
         </div>
 
@@ -974,6 +1014,36 @@ export default {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
+}
+
+.joystick-control {
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  grid-template-rows: repeat(3, 64px);
+  gap: 10px;
+  align-items: center;
+  justify-items: center;
+}
+
+.joystick-cell {
+  width: 64px;
+  height: 64px;
+}
+
+.joystick-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.joystick-center {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .manual-imei {
