@@ -34,6 +34,10 @@ def _get_grbl_motion_timeout_s() -> float:
     return float(os.getenv("APP_GRBL_MOTION_TIMEOUT_S", "5.0"))
 
 
+def _get_grbl_manual_settle_delay_s() -> float:
+    return max(0.0, float(os.getenv("APP_GRBL_MANUAL_SETTLE_DELAY_S", "0.12")))
+
+
 def _get_grbl_startup_delay_s() -> float:
     return float(os.getenv("APP_GRBL_STARTUP_DELAY_S", "2.0"))
 
@@ -274,7 +278,11 @@ def _ensure_grbl_serial() -> tuple[serial.Serial, list[str]]:
 atexit.register(_close_grbl_serial)
 
 
-def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = False) -> list[dict[str, Any]]:
+def _run_grbl_commands(
+    commands: list[tuple[str, bool]],
+    wait_for_idle: bool = False,
+    settle_delay_s: float = 0.0,
+) -> list[dict[str, Any]]:
     port = _get_grbl_port()
 
     with _GRBL_SERIAL_LOCK:
@@ -292,6 +300,8 @@ def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = F
                 idle_result = _wait_for_grbl_idle(ser)
                 if results:
                     results[-1]["idle"] = idle_result
+                if settle_delay_s > 0:
+                    time.sleep(settle_delay_s)
             return results
         except HTTPException as exc:
             if exc.status_code >= 500:
@@ -353,6 +363,7 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
                 ("G90", True),
             ],
             wait_for_idle=True,
+            settle_delay_s=_get_grbl_manual_settle_delay_s(),
         ),
     }
 
@@ -381,6 +392,7 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
                 (_format_xy_jog_command(delta_x, delta_y), True),
             ],
             wait_for_idle=True,
+            settle_delay_s=_get_grbl_manual_settle_delay_s(),
         ),
     }
 

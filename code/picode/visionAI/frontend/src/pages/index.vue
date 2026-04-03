@@ -588,6 +588,10 @@ export default {
       }
     },
     async runManualAction(actionKey, successMessage, requestFn, onSuccess = null) {
+      if (this.manualControlBusy) {
+        return;
+      }
+
       this.manualControlBusy = actionKey;
       this.manualControlError = "";
       this.manualControlSuccess = "";

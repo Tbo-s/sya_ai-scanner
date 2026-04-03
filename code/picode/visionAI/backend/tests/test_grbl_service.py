@@ -32,7 +32,7 @@ def test_z_up_uses_absolute_positioning(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -52,7 +52,7 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -72,7 +72,7 @@ def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -92,7 +92,7 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -112,7 +112,7 @@ def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -130,7 +130,7 @@ def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
@@ -148,7 +148,7 @@ def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
     commands = []
     wait_flags = []
 
-    def fake_run_grbl_commands(sequence, wait_for_idle=False):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0):
         commands.extend(sequence)
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
