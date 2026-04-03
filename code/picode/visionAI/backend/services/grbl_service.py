@@ -30,6 +30,10 @@ def _get_grbl_read_timeout_s() -> float:
     return float(os.getenv("APP_GRBL_READ_TIMEOUT_S", "1.5"))
 
 
+def _get_grbl_motion_timeout_s() -> float:
+    return float(os.getenv("APP_GRBL_MOTION_TIMEOUT_S", "5.0"))
+
+
 def _get_grbl_startup_delay_s() -> float:
     return float(os.getenv("APP_GRBL_STARTUP_DELAY_S", "2.0"))
 
@@ -148,6 +152,53 @@ def _send_grbl_on_serial(ser: serial.Serial, command: str, wait_for_ok: bool = T
     raise HTTPException(status_code=504, detail=f"GRBL command timed out: {normalized}")
 
 
+def _extract_grbl_state(line: str) -> Optional[str]:
+    stripped = line.strip()
+    if not stripped.startswith("<") or not stripped.endswith(">"):
+        return None
+    body = stripped[1:-1]
+    if not body:
+        return None
+    return body.split("|", 1)[0].strip() or None
+
+
+def _wait_for_grbl_idle(ser: serial.Serial) -> dict[str, Any]:
+    timeout_s = _get_grbl_motion_timeout_s()
+    read_timeout_s = _get_grbl_read_timeout_s()
+    started_at = time.time()
+    lines: list[str] = []
+
+    while time.time() - started_at < timeout_s:
+        ser.write(b"?")
+
+        status_started_at = time.time()
+        while time.time() - status_started_at < read_timeout_s:
+            raw = ser.readline()
+            if not raw:
+                continue
+
+            text = raw.decode("utf-8", errors="ignore").strip()
+            if not text:
+                continue
+
+            lines.append(text)
+            state = _extract_grbl_state(text)
+            if state is None:
+                continue
+            if state == "Idle":
+                return {"state": state, "response": lines}
+            if state == "Alarm":
+                raise HTTPException(
+                    status_code=400,
+                    detail={"command": "?", "ack": "alarm", "response": lines},
+                )
+            break
+
+        time.sleep(0.05)
+
+    raise HTTPException(status_code=504, detail="GRBL motion timed out waiting for idle.")
+
+
 def _close_grbl_serial_locked() -> None:
     global _GRBL_SERIAL, _GRBL_SERIAL_PORT, _GRBL_SERIAL_BAUD
 
@@ -223,7 +274,7 @@ def _ensure_grbl_serial() -> tuple[serial.Serial, list[str]]:
 atexit.register(_close_grbl_serial)
 
 
-def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]:
+def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = False) -> list[dict[str, Any]]:
     port = _get_grbl_port()
 
     with _GRBL_SERIAL_LOCK:
@@ -237,6 +288,10 @@ def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]
                 if index == 0 and startup_lines:
                     result["startup"] = startup_lines
                 results.append(result)
+            if wait_for_idle:
+                idle_result = _wait_for_grbl_idle(ser)
+                if results:
+                    results[-1]["idle"] = idle_result
             return results
         except HTTPException as exc:
             if exc.status_code >= 500:
@@ -296,7 +351,8 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
                 ("G91", True),
                 (f"G1 Z{delta_z} F{feed_rate}", True),
                 ("G90", True),
-            ]
+            ],
+            wait_for_idle=True,
         ),
     }
 
@@ -323,7 +379,8 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
                 ("G21", True),
                 ("G91", True),
                 (_format_xy_jog_command(delta_x, delta_y), True),
-            ]
+            ],
+            wait_for_idle=True,
         ),
     }
 

@@ -30,9 +30,11 @@ def test_parse_sequence_filters_empty_parts():
 
 def test_z_up_uses_absolute_positioning(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_Z_PICKUP", "42.5")
@@ -43,13 +45,16 @@ def test_z_up_uses_absolute_positioning(monkeypatch):
 
     assert result["action"] == "z_up"
     assert commands == [("G90", True), ("G1 Z42.5 F1234", True)]
+    assert wait_flags == [False]
 
 
 def test_z_down_uses_absolute_positioning(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_Z_TRAVEL", "7.0")
@@ -60,13 +65,16 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
 
     assert result["action"] == "z_down"
     assert commands == [("G90", True), ("G1 Z7.0 F900", True)]
+    assert wait_flags == [False]
 
 
 def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "1.25")
@@ -77,13 +85,16 @@ def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
 
     assert result["action"] == "manual_z_up"
     assert commands == [("G91", True), ("G1 Z1.25 F90", True), ("G90", True)]
+    assert wait_flags == [True]
 
 
 def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "0.75")
@@ -94,13 +105,16 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
 
     assert result["action"] == "manual_z_down"
     assert commands == [("G91", True), ("G1 Z-0.75 F60", True), ("G90", True)]
+    assert wait_flags == [True]
 
 
 def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -109,13 +123,16 @@ def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
 
     assert result["action"] == "manual_xy_move"
     assert commands == [("G21", True), ("G91", True), ("G0 X1.0", True)]
+    assert wait_flags == [True]
 
 
 def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -124,13 +141,16 @@ def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
 
     assert result["action"] == "manual_xy_move"
     assert commands == [("G21", True), ("G91", True), ("G0 Y-2.5", True)]
+    assert wait_flags == [True]
 
 
 def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
     commands = []
+    wait_flags = []
 
-    def fake_run_grbl_commands(sequence):
+    def fake_run_grbl_commands(sequence, wait_for_idle=False):
         commands.extend(sequence)
+        wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -139,6 +159,7 @@ def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
 
     assert result["action"] == "manual_xy_move"
     assert commands == [("G21", True), ("G91", True), ("G0 X1.0 Y-2.0", True)]
+    assert wait_flags == [True]
 
 
 def test_manual_xy_move_rejects_zero_delta():
@@ -146,6 +167,34 @@ def test_manual_xy_move_rejects_zero_delta():
         grbl_service.manual_xy_move(0.0, 0.0)
 
     assert exc_info.value.status_code == 400
+
+
+def test_wait_for_grbl_idle_polls_until_idle(monkeypatch):
+    class FakeSerial:
+        def __init__(self):
+            self.writes = []
+            self.responses = [
+                b"<Run|MPos:0.000,0.000,0.000|FS:0,0>\n",
+                b"<Idle|MPos:1.000,0.000,0.000|FS:0,0>\n",
+            ]
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def readline(self):
+            if self.responses:
+                return self.responses.pop(0)
+            return b""
+
+    monkeypatch.setenv("APP_GRBL_READ_TIMEOUT_S", "0.01")
+    monkeypatch.setenv("APP_GRBL_MOTION_TIMEOUT_S", "0.2")
+
+    fake_serial = FakeSerial()
+    result = grbl_service._wait_for_grbl_idle(fake_serial)
+
+    assert result["state"] == "Idle"
+    assert fake_serial.writes == [b"?", b"?"]
+    assert result["response"][-1].startswith("<Idle|")
 
 
 def test_run_grbl_commands_reuses_existing_serial_connection(monkeypatch):
