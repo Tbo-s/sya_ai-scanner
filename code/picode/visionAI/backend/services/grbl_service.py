@@ -1,7 +1,9 @@
+import atexit
 import os
 import re
+import threading
 import time
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import HTTPException
 import serial  # type: ignore
@@ -10,6 +12,10 @@ import services.machine_service as _machine_svc
 
 
 GRBL_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9\s\$\?\~\!\+\-\.\,\=\#\:\;\/\*\(\)]+$")
+_GRBL_SERIAL_LOCK = threading.Lock()
+_GRBL_SERIAL: Optional[serial.Serial] = None
+_GRBL_SERIAL_PORT: Optional[str] = None
+_GRBL_SERIAL_BAUD: Optional[int] = None
 
 
 def _get_grbl_port() -> str:
@@ -142,13 +148,89 @@ def _send_grbl_on_serial(ser: serial.Serial, command: str, wait_for_ok: bool = T
     raise HTTPException(status_code=504, detail=f"GRBL command timed out: {normalized}")
 
 
-def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]:
+def _close_grbl_serial_locked() -> None:
+    global _GRBL_SERIAL, _GRBL_SERIAL_PORT, _GRBL_SERIAL_BAUD
+
+    if _GRBL_SERIAL is not None:
+        try:
+            _GRBL_SERIAL.close()
+        except Exception:
+            pass
+
+    _GRBL_SERIAL = None
+    _GRBL_SERIAL_PORT = None
+    _GRBL_SERIAL_BAUD = None
+
+
+def _close_grbl_serial() -> None:
+    with _GRBL_SERIAL_LOCK:
+        _close_grbl_serial_locked()
+
+
+def _open_grbl_serial(port: str, baudrate: int) -> tuple[serial.Serial, list[str]]:
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baudrate
+    ser.timeout = 0.2
+
+    # Keep the Mega from being reset on every open/close cycle.
+    for line_signal in ("dtr", "rts"):
+        if hasattr(ser, line_signal):
+            try:
+                setattr(ser, line_signal, False)
+            except Exception:
+                pass
+
+    ser.open()
+
+    for line_signal in ("dtr", "rts"):
+        if hasattr(ser, line_signal):
+            try:
+                setattr(ser, line_signal, False)
+            except Exception:
+                pass
+
+    if hasattr(ser, "reset_output_buffer"):
+        ser.reset_output_buffer()
+
+    startup_lines = _prepare_grbl_serial(ser)
+    return ser, startup_lines
+
+
+def _ensure_grbl_serial() -> tuple[serial.Serial, list[str]]:
+    global _GRBL_SERIAL, _GRBL_SERIAL_PORT, _GRBL_SERIAL_BAUD
+
     port = _get_grbl_port()
     baudrate = _get_grbl_baud()
 
+    if _GRBL_SERIAL is not None:
+        same_port = _GRBL_SERIAL_PORT == port and _GRBL_SERIAL_BAUD == baudrate
+        if same_port and getattr(_GRBL_SERIAL, "is_open", False):
+            return _GRBL_SERIAL, []
+        _close_grbl_serial_locked()
+
     try:
-        with serial.Serial(port, baudrate, timeout=0.2) as ser:
-            startup_lines = _prepare_grbl_serial(ser)
+        ser, startup_lines = _open_grbl_serial(port, baudrate)
+        _GRBL_SERIAL = ser
+        _GRBL_SERIAL_PORT = port
+        _GRBL_SERIAL_BAUD = baudrate
+        return ser, startup_lines
+    except Exception as exc:
+        _close_grbl_serial_locked()
+        raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
+
+
+atexit.register(_close_grbl_serial)
+
+
+def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]:
+    port = _get_grbl_port()
+
+    with _GRBL_SERIAL_LOCK:
+        try:
+            ser, startup_lines = _ensure_grbl_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
             results = []
             for index, (command, wait_for_ok) in enumerate(commands):
                 result = _send_grbl_on_serial(ser, command, wait_for_ok=wait_for_ok)
@@ -156,10 +238,13 @@ def _run_grbl_commands(commands: list[tuple[str, bool]]) -> list[dict[str, Any]]
                     result["startup"] = startup_lines
                 results.append(result)
             return results
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                _close_grbl_serial_locked()
+            raise
+        except Exception as exc:
+            _close_grbl_serial_locked()
+            raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
 
 
 def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
@@ -363,11 +448,13 @@ def start_test_spin() -> dict[str, Any]:
 
 def stop_test_spin() -> dict[str, Any]:
     port = _get_grbl_port()
-    baudrate = _get_grbl_baud()
 
-    try:
-        with serial.Serial(port, baudrate, timeout=0.2) as ser:
-            startup_lines = _prepare_grbl_serial(ser)
+    with _GRBL_SERIAL_LOCK:
+        try:
+            ser, startup_lines = _ensure_grbl_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
             results = []
 
             results.append(_send_grbl_on_serial(ser, "!", wait_for_ok=False))
@@ -386,7 +473,10 @@ def stop_test_spin() -> dict[str, Any]:
 
             results.extend([unlock_result, absolute_result])
             return {"stopped": True, "results": results}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                _close_grbl_serial_locked()
+            raise
+        except Exception as exc:
+            _close_grbl_serial_locked()
+            raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc

@@ -146,3 +146,59 @@ def test_manual_xy_move_rejects_zero_delta():
         grbl_service.manual_xy_move(0.0, 0.0)
 
     assert exc_info.value.status_code == 400
+
+
+def test_run_grbl_commands_reuses_existing_serial_connection(monkeypatch):
+    created_serials = []
+    startup_calls = []
+    sent_commands = []
+
+    class FakeSerial:
+        def __init__(self):
+            self.port = None
+            self.baudrate = None
+            self.timeout = None
+            self.dtr = True
+            self.rts = True
+            self.is_open = False
+            created_serials.append(self)
+
+        def open(self):
+            self.is_open = True
+
+        def close(self):
+            self.is_open = False
+
+        def reset_input_buffer(self):
+            return None
+
+        def reset_output_buffer(self):
+            return None
+
+    def fake_prepare_grbl_serial(ser):
+        startup_calls.append(ser)
+        return ["Grbl ready"]
+
+    def fake_send_grbl_on_serial(ser, command, wait_for_ok=True):
+        sent_commands.append((ser, command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    grbl_service._close_grbl_serial()
+    monkeypatch.setattr(grbl_service.serial, "Serial", FakeSerial)
+    monkeypatch.setattr(grbl_service, "_prepare_grbl_serial", fake_prepare_grbl_serial)
+    monkeypatch.setattr(grbl_service, "_send_grbl_on_serial", fake_send_grbl_on_serial)
+
+    try:
+        first = grbl_service._run_grbl_commands([("G21", True)])
+        second = grbl_service._run_grbl_commands([("G91", True)])
+    finally:
+        grbl_service._close_grbl_serial()
+
+    assert len(created_serials) == 1
+    assert startup_calls == [created_serials[0]]
+    assert sent_commands == [
+        (created_serials[0], "G21", True),
+        (created_serials[0], "G91", True),
+    ]
+    assert first[0]["startup"] == ["Grbl ready"]
+    assert "startup" not in second[0]
