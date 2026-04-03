@@ -37,7 +37,7 @@
               :loading="isManualActionBusy('xy:forward')"
               :disabled="Boolean(manualControlBusy)"
               aria-label="Arm naar voren"
-              @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.')"
+              @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.')"
             >
               <v-icon>mdi-arrow-up</v-icon>
             </v-btn>
@@ -50,7 +50,7 @@
               :loading="isManualActionBusy('xy:left')"
               :disabled="Boolean(manualControlBusy)"
               aria-label="Arm naar links"
-              @click="jogXY(-manualXyStep, 0, 'Arm links gestuurd.')"
+              @click="jogXY(manualXyStep, 0, 'Arm links gestuurd.')"
             >
               <v-icon>mdi-arrow-left</v-icon>
             </v-btn>
@@ -62,7 +62,7 @@
               :loading="isManualActionBusy('xy:right')"
               :disabled="Boolean(manualControlBusy)"
               aria-label="Arm naar rechts"
-              @click="jogXY(manualXyStep, 0, 'Arm rechts gestuurd.')"
+              @click="jogXY(-manualXyStep, 0, 'Arm rechts gestuurd.')"
             >
               <v-icon>mdi-arrow-right</v-icon>
             </v-btn>
@@ -75,7 +75,7 @@
               :loading="isManualActionBusy('xy:back')"
               :disabled="Boolean(manualControlBusy)"
               aria-label="Arm naar achter"
-              @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.')"
+              @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.')"
             >
               <v-icon>mdi-arrow-down</v-icon>
             </v-btn>

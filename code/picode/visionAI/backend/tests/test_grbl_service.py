@@ -109,7 +109,7 @@ def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
     result = grbl_service.manual_xy_move(1.0, 0.0)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G91", True), ("G1 X1.0 F150", True), ("G90", True)]
+    assert commands == [("G91", True), ("G0 X1.0 F150", True), ("G90", True)]
 
 
 def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
@@ -125,7 +125,7 @@ def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
     result = grbl_service.manual_xy_move(0.0, -2.5)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G91", True), ("G1 Y-2.5 F150", True), ("G90", True)]
+    assert commands == [("G91", True), ("G0 Y-2.5 F150", True), ("G90", True)]
 
 
 def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
@@ -141,7 +141,7 @@ def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
     result = grbl_service.manual_xy_move(1.0, -2.0)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G91", True), ("G1 X1.0 Y-2.0 F200", True), ("G90", True)]
+    assert commands == [("G91", True), ("G0 X1.0 Y-2.0 F200", True), ("G90", True)]
 
 
 def test_manual_xy_move_rejects_zero_delta():

@@ -227,7 +227,7 @@ def _format_xy_jog_command(delta_x: float, delta_y: float, feed_rate: int) -> st
     if not axis_parts:
         raise HTTPException(status_code=400, detail="At least one XY jog delta must be non-zero.")
 
-    return f"G1 {' '.join(axis_parts)} F{feed_rate}"
+    return f"G0 {' '.join(axis_parts)} F{feed_rate}"
 
 
 def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
