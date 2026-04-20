@@ -16,6 +16,7 @@ PI_CAMERA_FULL_HEIGHT = 2592
 PI_CAMERA_JPEG_QUALITY = 95
 PI_CAMERA_AF_TIMEOUT_S = 3.0
 PI_CAMERA_STILL_TIMEOUT_EXTRA_S = 10.0
+PI_CAMERA_FOCUS_RANGES = {"normal", "macro", "full"}
 
 try:
     import cv2
@@ -113,6 +114,11 @@ def _get_pi_capture_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "captures"
 
 
+def _get_pi_camera_focus_range() -> str:
+    focus_range = os.getenv("APP_PI_CAMERA_FOCUS_RANGE", "macro").strip().lower()
+    return focus_range if focus_range in PI_CAMERA_FOCUS_RANGES else "macro"
+
+
 def _safe_filename_part(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
     return normalized or fallback
@@ -140,6 +146,16 @@ def _run_pi_autofocus_cycle(picam2, controls_module) -> None:
         picam2.set_controls({"AfMode": controls_module.AfModeEnum.Auto})
     except Exception:
         pass
+
+    focus_range_enum = getattr(controls_module, "AfRangeEnum", None)
+    if focus_range_enum is not None:
+        enum_name = _get_pi_camera_focus_range().capitalize()
+        enum_value = getattr(focus_range_enum, enum_name, None)
+        if enum_value is not None:
+            try:
+                picam2.set_controls({"AfRange": enum_value})
+            except Exception:
+                pass
 
     autofocus_cycle = getattr(picam2, "autofocus_cycle", None)
     if callable(autofocus_cycle):
@@ -214,23 +230,32 @@ def _get_pi_still_command() -> str:
 
 def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
     command = _get_pi_still_command()
+    focus_range = _get_pi_camera_focus_range()
     timeout_ms = max(warmup_ms, 2000)
     base_command = [
         command,
-        "-n",
-        "-o",
+        "--nopreview",
+        "--output",
         "-",
-        "-w",
+        "--width",
         str(width),
-        "-h",
+        "--height",
         str(height),
-        "-q",
+        "--quality",
         str(PI_CAMERA_JPEG_QUALITY),
-        "-t",
+        "--timeout",
         str(timeout_ms),
     ]
 
-    for candidate in (base_command + ["--autofocus"], base_command):
+    focus_candidates = (
+        ["--autofocus", "--focus-range", focus_range],
+        ["--autofocus", "--autofocus-range", focus_range],
+        ["--autofocus"],
+        [],
+    )
+
+    for focus_options in focus_candidates:
+        candidate = base_command + focus_options
         try:
             completed = subprocess.run(
                 candidate,
@@ -249,7 +274,7 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
 
         stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
         lowered_stderr = stderr.lower()
-        if "--autofocus" in candidate and (
+        if focus_options and (
             "unrecognised option" in lowered_stderr or "unrecognized option" in lowered_stderr
         ):
             continue
