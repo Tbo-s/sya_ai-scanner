@@ -248,9 +248,10 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
     ]
 
     focus_candidates = (
-        ["--autofocus", "--focus-range", focus_range],
-        ["--autofocus", "--autofocus-range", focus_range],
-        ["--autofocus"],
+        ["--autofocus-mode", "auto", "--autofocus-range", focus_range, "--autofocus-on-capture"],
+        ["--autofocus-on-capture", "--autofocus-range", focus_range],
+        ["--autofocus-mode", "auto", "--autofocus-range", focus_range],
+        ["--autofocus-range", focus_range],
         [],
     )
 
@@ -275,7 +276,9 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
         stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
         lowered_stderr = stderr.lower()
         if focus_options and (
-            "unrecognised option" in lowered_stderr or "unrecognized option" in lowered_stderr
+            "ambiguous" in lowered_stderr
+            or "unrecognised option" in lowered_stderr
+            or "unrecognized option" in lowered_stderr
         ):
             continue
 
