@@ -59,6 +59,13 @@
 
             <div v-if="!cameraViewerSource" class="secondary-text">Kies een camera om elke seconde een nieuwe foto te tonen.</div>
             <div v-if="cameraViewerError" class="error-text">{{ cameraViewerError }}</div>
+            <v-progress-linear
+              v-if="cameraViewerBusy"
+              indeterminate
+              color="primary"
+              rounded
+              class="camera-loading"
+            />
             <img
               v-if="cameraViewerImageUrl"
               :src="cameraViewerImageUrl"
@@ -498,6 +505,7 @@ export default {
       cameraViewerImageUrl: "",
       cameraViewerTimer: null,
       cameraViewerError: "",
+      cameraViewerBusy: false,
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
@@ -807,16 +815,47 @@ export default {
         clearTimeout(this.cameraViewerTimer);
         this.cameraViewerTimer = null;
       }
+      this.cameraViewerBusy = false;
       if (clearSelection) {
         this.cameraViewerSource = "";
-        this.cameraViewerImageUrl = "";
+        this.revokeCameraViewerImage();
       }
     },
-    refreshCameraViewerImage() {
-      if (!this.cameraViewerSource) {
+    revokeCameraViewerImage() {
+      if (this.cameraViewerImageUrl && this.cameraViewerImageUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(this.cameraViewerImageUrl);
+      }
+      this.cameraViewerImageUrl = "";
+    },
+    async refreshCameraViewerImage() {
+      if (!this.cameraViewerSource || this.cameraViewerBusy) {
         return;
       }
-      this.cameraViewerImageUrl = `/api/camera/snapshot/${this.cameraViewerSource}?t=${Date.now()}`;
+      const source = this.cameraViewerSource;
+      this.cameraViewerBusy = true;
+
+      try {
+        const response = await axios.get(`/api/camera/snapshot/${source}`, {
+          responseType: "blob",
+          params: { t: Date.now() },
+        });
+        if (!this.cameraViewerOpen || this.cameraViewerSource !== source) {
+          return;
+        }
+        const imageUrl = URL.createObjectURL(response.data);
+        this.revokeCameraViewerImage();
+        this.cameraViewerImageUrl = imageUrl;
+        this.cameraViewerError = "";
+      } catch (error) {
+        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
+          this.cameraViewerError = await this.getCameraViewerErrorMessage(error, source);
+        }
+      } finally {
+        this.cameraViewerBusy = false;
+        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
+          this.scheduleCameraViewerRefresh();
+        }
+      }
     },
     scheduleCameraViewerRefresh() {
       if (!this.cameraViewerOpen || !this.cameraViewerSource) {
@@ -832,12 +871,39 @@ export default {
     },
     handleCameraViewerImageLoad() {
       this.cameraViewerError = "";
-      this.scheduleCameraViewerRefresh();
     },
     handleCameraViewerImageError() {
       const sourceLabel = this.cameraViewerSource === "pi" ? "Pi camera" : "USB camera";
       this.cameraViewerError = `Kon geen foto ophalen van ${sourceLabel}.`;
-      this.scheduleCameraViewerRefresh();
+    },
+    async getCameraViewerErrorMessage(error, source) {
+      const sourceLabel = source === "pi" ? "Pi camera" : "USB camera";
+      const fallback = `Kon geen foto ophalen van ${sourceLabel}.`;
+      const data = error?.response?.data;
+
+      if (data instanceof Blob) {
+        const text = await data.text();
+        if (!text) {
+          return fallback;
+        }
+        try {
+          const parsed = JSON.parse(text);
+          return `${fallback} ${this.stringifyErrorDetail(parsed?.detail)}`;
+        } catch (_) {
+          return `${fallback} ${text}`;
+        }
+      }
+
+      return `${fallback} ${this.stringifyErrorDetail(data?.detail || error?.message)}`;
+    },
+    stringifyErrorDetail(detail) {
+      if (!detail) {
+        return "";
+      }
+      if (typeof detail === "string") {
+        return detail;
+      }
+      return JSON.stringify(detail);
     },
     startImeiDetection() {
       this.stopImeiDetection();
@@ -1058,6 +1124,7 @@ export default {
       this.piCaptureSuccess = "";
       this.cameraViewerOpen = false;
       this.cameraViewerError = "";
+      this.cameraViewerBusy = false;
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
@@ -1223,6 +1290,10 @@ export default {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 16px;
+}
+
+.camera-loading {
+  margin-bottom: 12px;
 }
 
 .camera-preview {

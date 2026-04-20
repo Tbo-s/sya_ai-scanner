@@ -3,6 +3,8 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -13,6 +15,7 @@ PI_CAMERA_FULL_WIDTH = 4608
 PI_CAMERA_FULL_HEIGHT = 2592
 PI_CAMERA_JPEG_QUALITY = 95
 PI_CAMERA_AF_TIMEOUT_S = 3.0
+PI_CAMERA_STILL_TIMEOUT_EXTRA_S = 10.0
 
 try:
     import cv2
@@ -195,6 +198,90 @@ def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
                 pass
 
 
+def _get_pi_still_command() -> str:
+    configured = os.getenv("APP_PI_STILL_COMMAND", "").strip()
+    if configured:
+        return configured
+    for command in ("libcamera-still", "rpicam-still"):
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+    raise HTTPException(
+        status_code=500,
+        detail="No Pi camera still command found. Install libcamera/rpicam tools or set APP_PI_STILL_COMMAND.",
+    )
+
+
+def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
+    command = _get_pi_still_command()
+    timeout_ms = max(warmup_ms, 2000)
+    base_command = [
+        command,
+        "-n",
+        "-o",
+        "-",
+        "-w",
+        str(width),
+        "-h",
+        str(height),
+        "-q",
+        str(PI_CAMERA_JPEG_QUALITY),
+        "-t",
+        str(timeout_ms),
+    ]
+
+    for candidate in (base_command + ["--autofocus"], base_command):
+        try:
+            completed = subprocess.run(
+                candidate,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=(timeout_ms / 1000.0) + PI_CAMERA_STILL_TIMEOUT_EXTRA_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail=f"Pi camera still command timed out: {command}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to run Pi camera still command: {exc}") from exc
+
+        if completed.returncode == 0 and completed.stdout:
+            return completed.stdout
+
+        stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
+        lowered_stderr = stderr.lower()
+        if "--autofocus" in candidate and (
+            "unrecognised option" in lowered_stderr or "unrecognized option" in lowered_stderr
+        ):
+            continue
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pi camera still command failed: {stderr or 'no output'}",
+        )
+
+    raise HTTPException(status_code=500, detail="Pi camera still command failed.")
+
+
+def _capture_pi_csi_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
+    picamera_error = None
+    try:
+        frame = _capture_pi_csi_frame(width, height, warmup_ms)
+        return _encode_jpeg(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    except HTTPException as exc:
+        picamera_error = exc.detail
+
+    try:
+        return _capture_pi_still_jpeg(width, height, warmup_ms)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "picamera2": picamera_error,
+                "still_command": exc.detail,
+            },
+        ) from exc
+
+
 def _extract_imei_from_text(text: str):
     digits_only = re.sub(r"\D", "", text)
     match = re.search(r"\d{15}", digits_only)
@@ -293,8 +380,11 @@ def camera_snapshot(
         camera_manager.start()
         return _encode_jpeg_response(camera_manager.wait_for_frame())
     if normalized == "pi":
-        frame = _capture_pi_csi_frame(width, height, warmup_ms)
-        return _encode_jpeg_response(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        return Response(
+            content=_capture_pi_csi_jpeg(width, height, warmup_ms),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
     raise HTTPException(status_code=400, detail="Unknown camera source. Use 'usb' or 'pi'.")
 
 
@@ -306,8 +396,6 @@ def capture_photo(payload: CaptureRequest):
 
 @router.post("/camera/pi/capture", tags=["Camera"])
 def capture_pi_camera_photo(payload: PiCaptureRequest):
-    frame = _capture_pi_csi_frame(payload.width, payload.height, payload.warmup_ms)
-    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     capture_dir = _get_pi_capture_dir()
     capture_dir.mkdir(parents=True, exist_ok=True)
     imei_part = _safe_filename_part(payload.imei, "no_imei")
@@ -315,5 +403,5 @@ def capture_pi_camera_photo(payload: PiCaptureRequest):
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"{timestamp}_{imei_part}_{tag_part}.jpg"
     file_path = capture_dir / filename
-    file_path.write_bytes(_encode_jpeg(bgr))
+    file_path.write_bytes(_capture_pi_csi_jpeg(payload.width, payload.height, payload.warmup_ms))
     return {"saved": True, "filename": filename, "path": str(file_path), "imei": payload.imei, "tag": payload.tag}
