@@ -94,6 +94,31 @@
         </div>
 
         <div class="control-group">
+          <div class="control-title">Tray</div>
+          <div class="control-buttons">
+            <v-btn
+              color="success"
+              prepend-icon="mdi-tray-arrow-up"
+              :loading="isManualActionBusy('tray:out')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="moveTray('TRAY_OUT')"
+            >
+              OPEN
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              prepend-icon="mdi-tray-arrow-down"
+              :loading="isManualActionBusy('tray:in')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="moveTray('TRAY_IN')"
+            >
+              CLOSE
+            </v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
           <div class="control-title">Wrist Servo 1</div>
           <div class="control-status secondary-text">
             Logisch: {{ manualStatus.wrist1 ?? "-" }}° | Fysiek: {{ manualStatus.wrist1Physical ?? "-" }}°
@@ -622,6 +647,14 @@ export default {
         `xy:${deltaX}:${deltaY}`,
         label,
         () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY })
+      );
+    },
+    async moveTray(command) {
+      const isOpening = command === "TRAY_OUT";
+      await this.runManualAction(
+        `tray:${isOpening ? "out" : "in"}`,
+        `Tray ${isOpening ? "geopend" : "gesloten"}.`,
+        () => axios.post("/api/arduino/leonardo/tray", { command })
       );
     },
     async stepWrist(wristIndex, delta) {
