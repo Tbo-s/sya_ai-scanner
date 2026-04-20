@@ -22,7 +22,58 @@
         >
           Stop Everything
         </v-btn>
+        <v-btn
+          color="info"
+          variant="tonal"
+          prepend-icon="mdi-camera"
+          @click="openCameraViewer"
+        >
+          Camera View
+        </v-btn>
       </div>
+
+      <v-dialog
+        v-model="cameraViewerOpen"
+        max-width="920"
+        @update:model-value="handleCameraViewerDialogUpdate"
+      >
+        <v-card class="camera-viewer-card">
+          <v-card-title>Camera bekijken</v-card-title>
+          <v-card-text>
+            <div class="camera-choice-row">
+              <v-btn
+                color="primary"
+                :variant="cameraViewerSource === 'usb' ? 'flat' : 'tonal'"
+                @click="selectCameraViewer('usb')"
+              >
+                USB camera
+              </v-btn>
+              <v-btn
+                color="primary"
+                :variant="cameraViewerSource === 'pi' ? 'flat' : 'tonal'"
+                @click="selectCameraViewer('pi')"
+              >
+                Pi Cam v3
+              </v-btn>
+            </div>
+
+            <div v-if="!cameraViewerSource" class="secondary-text">Kies een camera om elke seconde een nieuwe foto te tonen.</div>
+            <div v-if="cameraViewerError" class="error-text">{{ cameraViewerError }}</div>
+            <img
+              v-if="cameraViewerImageUrl"
+              :src="cameraViewerImageUrl"
+              :alt="cameraViewerSource === 'pi' ? 'Pi camera snapshot' : 'USB camera snapshot'"
+              class="camera-preview"
+              @load="handleCameraViewerImageLoad"
+              @error="handleCameraViewerImageError"
+            />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn color="secondary" variant="text" @click="closeCameraViewer">Sluiten</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <div class="control-grid">
         <div class="control-group">
@@ -442,6 +493,11 @@ export default {
       piCaptureBusy: false,
       piCaptureError: "",
       piCaptureSuccess: "",
+      cameraViewerOpen: false,
+      cameraViewerSource: "",
+      cameraViewerImageUrl: "",
+      cameraViewerTimer: null,
+      cameraViewerError: "",
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
@@ -512,6 +568,7 @@ export default {
   beforeUnmount() {
     clearTimeout(this.timer);
     this.stopImeiDetection();
+    this.stopCameraViewer();
     this.stopScanCamera();
     this.stopStartupTestSpin();
     webSocketService.offMessage("scan_event");
@@ -725,6 +782,63 @@ export default {
       this.cameraKey = Date.now();
       await nextTick();
     },
+    openCameraViewer() {
+      this.cameraViewerOpen = true;
+      this.cameraViewerError = "";
+    },
+    closeCameraViewer() {
+      this.cameraViewerOpen = false;
+      this.stopCameraViewer();
+    },
+    handleCameraViewerDialogUpdate(open) {
+      if (!open) {
+        this.stopCameraViewer();
+      }
+    },
+    selectCameraViewer(source) {
+      this.stopCameraViewer(false);
+      this.cameraViewerSource = source;
+      this.cameraViewerError = "";
+      this.cameraViewerImageUrl = "";
+      this.refreshCameraViewerImage();
+    },
+    stopCameraViewer(clearSelection = true) {
+      if (this.cameraViewerTimer) {
+        clearTimeout(this.cameraViewerTimer);
+        this.cameraViewerTimer = null;
+      }
+      if (clearSelection) {
+        this.cameraViewerSource = "";
+        this.cameraViewerImageUrl = "";
+      }
+    },
+    refreshCameraViewerImage() {
+      if (!this.cameraViewerSource) {
+        return;
+      }
+      this.cameraViewerImageUrl = `/api/camera/snapshot/${this.cameraViewerSource}?t=${Date.now()}`;
+    },
+    scheduleCameraViewerRefresh() {
+      if (!this.cameraViewerOpen || !this.cameraViewerSource) {
+        return;
+      }
+      if (this.cameraViewerTimer) {
+        clearTimeout(this.cameraViewerTimer);
+      }
+      this.cameraViewerTimer = setTimeout(() => {
+        this.cameraViewerTimer = null;
+        this.refreshCameraViewerImage();
+      }, 1000);
+    },
+    handleCameraViewerImageLoad() {
+      this.cameraViewerError = "";
+      this.scheduleCameraViewerRefresh();
+    },
+    handleCameraViewerImageError() {
+      const sourceLabel = this.cameraViewerSource === "pi" ? "Pi camera" : "USB camera";
+      this.cameraViewerError = `Kon geen foto ophalen van ${sourceLabel}.`;
+      this.scheduleCameraViewerRefresh();
+    },
     startImeiDetection() {
       this.stopImeiDetection();
       this.scanInterval = setInterval(async () => {
@@ -925,6 +1039,7 @@ export default {
     resetFlow(restartTestSpin = true) {
       clearTimeout(this.timer);
       this.stopImeiDetection();
+      this.stopCameraViewer();
       this.toggleCamera(false);
       this.step = 0;
       this.showPrimaryAction = false;
@@ -941,6 +1056,8 @@ export default {
       this.piCaptureBusy = false;
       this.piCaptureError = "";
       this.piCaptureSuccess = "";
+      this.cameraViewerOpen = false;
+      this.cameraViewerError = "";
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
@@ -1095,6 +1212,26 @@ export default {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.camera-viewer-card {
+  background: rgb(var(--v-theme-surface));
+}
+
+.camera-choice-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.camera-preview {
+  width: 100%;
+  max-height: 64vh;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.24);
 }
 
 .camera-stream {

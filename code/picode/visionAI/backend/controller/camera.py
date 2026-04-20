@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 import os
 import re
@@ -9,6 +9,10 @@ from datetime import datetime
 from pathlib import Path
 
 router = APIRouter()
+PI_CAMERA_FULL_WIDTH = 4608
+PI_CAMERA_FULL_HEIGHT = 2592
+PI_CAMERA_JPEG_QUALITY = 95
+PI_CAMERA_AF_TIMEOUT_S = 3.0
 
 try:
     import cv2
@@ -90,9 +94,9 @@ class CaptureRequest(BaseModel):
 class PiCaptureRequest(BaseModel):
     imei: str = ""
     tag: str = "capture"
-    width: int = Field(default=1920, ge=320, le=5000)
-    height: int = Field(default=1080, ge=240, le=5000)
-    warmup_ms: int = Field(default=300, ge=0, le=5000)
+    width: int = Field(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000)
+    height: int = Field(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000)
+    warmup_ms: int = Field(default=500, ge=0, le=5000)
 
 
 def _get_photo_storage_dir() -> Path:
@@ -111,13 +115,57 @@ def _safe_filename_part(value: str, fallback: str) -> str:
     return normalized or fallback
 
 
+def _wait_for_picamera_job(picam2, job) -> None:
+    if job is None:
+        return
+    if hasattr(picam2, "wait"):
+        try:
+            picam2.wait(job, timeout=PI_CAMERA_AF_TIMEOUT_S)
+            return
+        except TypeError:
+            picam2.wait(job)
+            return
+    if hasattr(job, "wait"):
+        try:
+            job.wait(timeout=PI_CAMERA_AF_TIMEOUT_S)
+        except TypeError:
+            job.wait()
+
+
+def _run_pi_autofocus_cycle(picam2, controls_module) -> None:
+    try:
+        picam2.set_controls({"AfMode": controls_module.AfModeEnum.Auto})
+    except Exception:
+        pass
+
+    autofocus_cycle = getattr(picam2, "autofocus_cycle", None)
+    if callable(autofocus_cycle):
+        for kwargs in ({"wait": True}, {}):
+            try:
+                job = autofocus_cycle(**kwargs)
+                if not kwargs.get("wait"):
+                    _wait_for_picamera_job(picam2, job)
+                return
+            except TypeError:
+                continue
+            except Exception:
+                return
+
+    try:
+        picam2.set_controls({"AfTrigger": controls_module.AfTriggerEnum.Start})
+        time.sleep(min(PI_CAMERA_AF_TIMEOUT_S, 1.0))
+    except Exception:
+        pass
+
+
 def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
     try:
         from picamera2 import Picamera2  # type: ignore
+        from libcamera import controls  # type: ignore
     except ModuleNotFoundError as exc:
         raise HTTPException(
             status_code=500,
-            detail="Picamera2 is not installed. On Raspberry Pi install with `sudo apt install -y python3-picamera2`.",
+            detail="Picamera2/libcamera is not installed. On Raspberry Pi install with `sudo apt install -y python3-picamera2`.",
         ) from exc
 
     picam2 = None
@@ -128,6 +176,8 @@ def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
         picam2.start()
         if warmup_ms > 0:
             time.sleep(warmup_ms / 1000.0)
+
+        _run_pi_autofocus_cycle(picam2, controls)
         return picam2.capture_array("main")
     except HTTPException:
         raise
@@ -216,6 +266,38 @@ def take_photo(label: str, session_id: str) -> dict:
     return {"path": str(file_path), "label": label, "session_id": session_id}
 
 
+def _encode_jpeg(frame) -> bytes:
+    ok, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), PI_CAMERA_JPEG_QUALITY])
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to encode camera frame as JPEG.")
+    return jpg.tobytes()
+
+
+def _encode_jpeg_response(frame) -> Response:
+    return Response(
+        content=_encode_jpeg(frame),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/camera/snapshot/{source}", tags=["Camera"])
+def camera_snapshot(
+    source: str,
+    width: int = Query(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000),
+    height: int = Query(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000),
+    warmup_ms: int = Query(default=500, ge=0, le=5000),
+):
+    normalized = source.strip().lower()
+    if normalized == "usb":
+        camera_manager.start()
+        return _encode_jpeg_response(camera_manager.wait_for_frame())
+    if normalized == "pi":
+        frame = _capture_pi_csi_frame(width, height, warmup_ms)
+        return _encode_jpeg_response(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    raise HTTPException(status_code=400, detail="Unknown camera source. Use 'usb' or 'pi'.")
+
+
 @router.post("/camera/capture", tags=["Camera"])
 def capture_photo(payload: CaptureRequest):
     camera_manager.start()
@@ -233,6 +315,5 @@ def capture_pi_camera_photo(payload: PiCaptureRequest):
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"{timestamp}_{imei_part}_{tag_part}.jpg"
     file_path = capture_dir / filename
-    if not cv2.imwrite(str(file_path), bgr):
-        raise HTTPException(status_code=500, detail=f"Failed to save capture to {file_path}")
+    file_path.write_bytes(_encode_jpeg(bgr))
     return {"saved": True, "filename": filename, "path": str(file_path), "imei": payload.imei, "tag": payload.tag}
