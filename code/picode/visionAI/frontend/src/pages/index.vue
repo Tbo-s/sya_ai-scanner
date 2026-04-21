@@ -137,9 +137,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:forward')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
               aria-label="Arm naar voren"
-              @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
+              @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
             >
               <v-icon>mdi-arrow-up</v-icon>
             </v-btn>
@@ -175,9 +175,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:back')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
               aria-label="Arm naar achter"
-              @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
+              @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
             >
               <v-icon>mdi-arrow-down</v-icon>
             </v-btn>
