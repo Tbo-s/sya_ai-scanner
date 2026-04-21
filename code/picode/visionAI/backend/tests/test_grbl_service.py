@@ -29,6 +29,7 @@ def test_parse_sequence_filters_empty_parts():
 
 
 def test_parse_grbl_status_line_extracts_coordinates_and_limits():
+    grbl_service._set_arm_unhomed()
     status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|WPos:0.500,1.500,0.000|Pn:XY>")
 
     assert status is not None
@@ -37,6 +38,18 @@ def test_parse_grbl_status_line_extracts_coordinates_and_limits():
     assert status["work_position"] == {"x": 0.5, "y": 1.5, "z": 0.0}
     assert status["limits"] == {"x": True, "y": True}
     assert status["limit_axes"] == ["x", "y"]
+
+
+def test_parse_grbl_status_line_supports_active_absent_limit_pins(monkeypatch):
+    monkeypatch.setenv("APP_GRBL_LIMIT_PIN_MODE", "active_absent")
+
+    status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|Pn:XY>")
+    assert status is not None
+    assert status["limits"] == {"x": False, "y": False}
+
+    status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000>")
+    assert status is not None
+    assert status["limits"] == {"x": False, "y": False}
 
 
 def test_limit_stop_axes_use_configured_zero_direction(monkeypatch):
@@ -136,13 +149,13 @@ def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
-    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60")
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = grbl_service.manual_xy_move(1.0, 0.0)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G21", True), ("G91", True), ("G1 X1.0 F60", True)]
+    assert commands == [("G21", True), ("G91", True), ("G1 X1.0 F120", True)]
     assert wait_flags == [True]
 
 
@@ -155,13 +168,13 @@ def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
-    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60")
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = grbl_service.manual_xy_move(0.0, -2.5)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G21", True), ("G91", True), ("G1 Y-2.5 F60", True)]
+    assert commands == [("G21", True), ("G91", True), ("G1 Y-2.5 F120", True)]
     assert wait_flags == [True]
 
 
@@ -174,13 +187,13 @@ def test_manual_xy_move_keeps_both_axes_when_needed(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
-    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60")
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = grbl_service.manual_xy_move(1.0, -2.0)
 
     assert result["action"] == "manual_xy_move"
-    assert commands == [("G21", True), ("G91", True), ("G1 X1.0 Y-2.0 F60", True)]
+    assert commands == [("G21", True), ("G91", True), ("G1 X1.0 Y-2.0 F120", True)]
     assert wait_flags == [True]
 
 

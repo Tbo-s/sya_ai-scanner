@@ -101,12 +101,27 @@
           <div class="arm-coordinate">Y {{ formattedArmCoordinate("y") }} mm</div>
         </div>
         <div class="arm-limit-row">
+          <v-chip :color="armHomed ? 'success' : 'warning'" variant="tonal" size="small">
+            Homing: {{ armHomed ? "klaar" : "niet klaar" }}
+          </v-chip>
           <v-chip :color="armLimits.x ? 'warning' : 'success'" variant="tonal" size="small">
             X limit: {{ armLimits.x ? "geraakt" : "vrij" }}
           </v-chip>
           <v-chip :color="armLimits.y ? 'warning' : 'success'" variant="tonal" size="small">
             Y limit: {{ armLimits.y ? "geraakt" : "vrij" }}
           </v-chip>
+        </div>
+        <div class="arm-limit-row">
+          <v-btn
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-home-map-marker"
+            :loading="isManualActionBusy('xy:home')"
+            :disabled="Boolean(manualControlBusy)"
+            @click="homeArm"
+          >
+            Home XY naar 0,0
+          </v-btn>
         </div>
         <div v-if="armStatusError" class="error-text">{{ armStatusError }}</div>
       </div>
@@ -551,7 +566,7 @@ export default {
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
       manualXyStep: 1,
-      manualXyFeedRate: 60,
+      manualXyFeedRate: 120,
       manualControlBusy: "",
       manualControlError: "",
       manualControlSuccess: "",
@@ -563,6 +578,7 @@ export default {
         x: null,
         y: null,
       },
+      armHomed: false,
       armLimits: {
         x: false,
         y: false,
@@ -634,7 +650,7 @@ export default {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
         this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 1);
-        this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 60);
+        this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 120);
         this.armLimitTowardZeroSign = {
           x: Number(response.data?.grbl_limit_toward_zero_sign?.x || -1),
           y: Number(response.data?.grbl_limit_toward_zero_sign?.y || -1),
@@ -642,7 +658,7 @@ export default {
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
         this.manualXyStep = 1;
-        this.manualXyFeedRate = 60;
+        this.manualXyFeedRate = 120;
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
@@ -723,6 +739,9 @@ export default {
       return sign > 0 ? delta > 0 : delta < 0;
     },
     xyLimitBlocks(deltaX, deltaY) {
+      if (!this.armHomed) {
+        return false;
+      }
       return (
         (this.armLimits.x && this.deltaMovesTowardLimit("x", deltaX)) ||
         (this.armLimits.y && this.deltaMovesTowardLimit("y", deltaY))
@@ -754,6 +773,7 @@ export default {
         x: Boolean(limits.x),
         y: Boolean(limits.y),
       };
+      this.armHomed = Boolean(status?.homed);
       if (status?.limit_toward_zero_sign) {
         this.armLimitTowardZeroSign = {
           x: Number(status.limit_toward_zero_sign.x || -1),
@@ -828,6 +848,21 @@ export default {
     async jogZ(delta) {
       const label = delta > 0 ? `Z-as +${delta} gestuurd.` : `Z-as ${delta} gestuurd.`;
       await this.runManualAction(`z:${delta}`, label, () => axios.post("/api/arduino/grbl/z/jog", { delta }));
+    },
+    async homeArm() {
+      await this.runManualAction(
+        "xy:home",
+        "Arm gehomed naar 0,0.",
+        () => axios.post("/api/arduino/grbl/home-xy"),
+        (data) => {
+          this.armCoordinates = {
+            x: this.parseManualStatusNumber(data?.position?.x),
+            y: this.parseManualStatusNumber(data?.position?.y),
+          };
+          this.armHomed = Boolean(data?.homed);
+          this.fetchArmStatus();
+        }
+      );
     },
     async jogXY(deltaX, deltaY, label, actionKey) {
       await this.runManualAction(

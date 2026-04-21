@@ -16,11 +16,14 @@ def _limit_toward_zero_sign(axis: str) -> int:
 def get_runtime_settings() -> dict[str, Any]:
     return {
         "auto_safe_idle_on_boot": _is_enabled("APP_MACHINE_SAFE_IDLE_ON_BOOT", "1"),
+        "auto_grbl_home_on_boot": _is_enabled("APP_GRBL_HOME_ON_BOOT", "1"),
         "auto_grbl_boot_sequence": _is_enabled("APP_GRBL_BOOT_SEQUENCE_ENABLED", "0"),
         "auto_grbl_test_spin_on_ui_start": _is_enabled("APP_GRBL_TEST_SPIN_ON_UI_START", "1"),
         "grbl_boot_sequence": os.getenv("APP_GRBL_BOOT_SEQUENCE", "$X|$H"),
         "grbl_manual_xy_step": float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "1.0")),
-        "grbl_manual_xy_feed_rate": int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60")),
+        "grbl_manual_xy_feed_rate": int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")),
+        "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120")),
+        "grbl_limit_pin_mode": os.getenv("APP_GRBL_LIMIT_PIN_MODE", "active_present").strip(),
         "grbl_limit_toward_zero_sign": {
             "x": _limit_toward_zero_sign("X"),
             "y": _limit_toward_zero_sign("Y"),
@@ -57,8 +60,7 @@ def home_axes() -> dict[str, Any]:
 
     results = []
     results.append({"step": "leonardo_home", "result": machine_service.home_machine()})
-    sequence = os.getenv("APP_GRBL_BOOT_SEQUENCE", "$X|$H")
-    results.append({"step": "grbl_home", "result": grbl_service.run_sequence(sequence, enabled=True)})
+    results.append({"step": "grbl_home_xy", "result": grbl_service.home_xy_to_limits()})
     return {"ok": True, "results": results}
 
 
@@ -67,6 +69,7 @@ def boot_initialize() -> dict[str, Any]:
 
     report = {
         "safe_idle": None,
+        "grbl_home_xy": None,
         "grbl_boot": None,
         "errors": [],
     }
@@ -76,6 +79,12 @@ def boot_initialize() -> dict[str, Any]:
             report["safe_idle"] = safe_idle_state()
         except Exception as exc:
             report["errors"].append({"step": "safe_idle", "error": str(exc)})
+
+    if _is_enabled("APP_GRBL_HOME_ON_BOOT", "1"):
+        try:
+            report["grbl_home_xy"] = grbl_service.home_xy_to_limits()
+        except Exception as exc:
+            report["errors"].append({"step": "grbl_home_xy", "error": str(exc)})
 
     if _is_enabled("APP_GRBL_BOOT_SEQUENCE_ENABLED", "0"):
         try:

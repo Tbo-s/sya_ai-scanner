@@ -18,6 +18,7 @@ _GRBL_SERIAL_PORT: Optional[str] = None
 _GRBL_SERIAL_BAUD: Optional[int] = None
 _ARM_POSITION_LOCK = threading.Lock()
 _ARM_XY_POSITION: dict[str, Optional[float]] = {"x": None, "y": None}
+_ARM_HOMED = False
 
 
 def _get_grbl_port() -> str:
@@ -78,12 +79,45 @@ def _get_manual_xy_step() -> float:
 
 
 def _get_manual_xy_feed_rate() -> int:
-    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60"))
+    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120"))
+
+
+def _get_home_xy_feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120"))
+
+
+def _get_home_xy_search_distance() -> float:
+    return abs(float(os.getenv("APP_GRBL_HOME_XY_SEARCH_DISTANCE", "1000.0")))
+
+
+def _get_home_xy_axis_order() -> list[str]:
+    raw_order = os.getenv("APP_GRBL_HOME_XY_AXIS_ORDER", "X,Y")
+    order = []
+    for axis in re.split(r"[\s,|;]+", raw_order.strip().upper()):
+        if axis in {"X", "Y"} and axis.lower() not in order:
+            order.append(axis.lower())
+    return order or ["x", "y"]
 
 
 def _get_limit_toward_zero_sign(axis: str) -> int:
     raw = os.getenv(f"APP_GRBL_{axis.upper()}_LIMIT_TOWARD_ZERO_SIGN", "-1").strip().lower()
     return 1 if raw in {"1", "+1", "+", "positive", "pos"} else -1
+
+
+def _get_limit_pin_mode() -> str:
+    mode = os.getenv("APP_GRBL_LIMIT_PIN_MODE", "active_present").strip().lower()
+    if mode in {"active_absent", "absent", "raw_high", "inverted"}:
+        return "active_absent"
+    return "active_present"
+
+
+def _get_configure_nc_limits_enabled() -> bool:
+    return os.getenv("APP_GRBL_CONFIGURE_NC_LIMITS", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_limit_pins_invert_value() -> int:
+    raw = os.getenv("APP_GRBL_LIMIT_PINS_INVERT", "1").strip().lower()
+    return 1 if raw in {"1", "true", "yes", "on"} else 0
 
 
 def is_safe_grbl_command(command: str) -> bool:
@@ -149,6 +183,21 @@ def _parse_grbl_position(value: str) -> Optional[dict[str, float]]:
         return None
 
 
+def _parse_limit_state_from_pin_field(pin_state: str, pin_field_seen: bool) -> tuple[dict[str, bool], list[str]]:
+    pins = pin_state.upper()
+    mode = _get_limit_pin_mode()
+    limits: dict[str, bool] = {}
+
+    for axis in ("x", "y"):
+        pin_present = axis.upper() in pins
+        if mode == "active_absent":
+            limits[axis] = not pin_present if pin_field_seen else False
+        else:
+            limits[axis] = pin_present
+
+    return limits, [axis for axis in ("x", "y") if limits[axis]]
+
+
 def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
     stripped = line.strip()
     if not stripped.startswith("<") or not stripped.endswith(">"):
@@ -164,9 +213,13 @@ def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
         "machine_position": None,
         "work_position": None,
         "pin_state": "",
+        "pin_state_seen": False,
         "limit_axes": [],
         "limits": {"x": False, "y": False},
     }
+
+    pin_state = ""
+    pin_field_seen = False
 
     for field in fields[1:]:
         if ":" not in field:
@@ -177,13 +230,14 @@ def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
         elif key == "WPos":
             parsed["work_position"] = _parse_grbl_position(value)
         elif key == "Pn":
-            pins = value.upper()
-            parsed["pin_state"] = pins
-            parsed["limits"] = {
-                "x": "X" in pins,
-                "y": "Y" in pins,
-            }
-            parsed["limit_axes"] = [axis for axis in ("x", "y") if parsed["limits"][axis]]
+            pin_state = value.upper()
+            pin_field_seen = True
+
+    limits, limit_axes = _parse_limit_state_from_pin_field(pin_state, pin_field_seen)
+    parsed["pin_state"] = pin_state
+    parsed["pin_state_seen"] = pin_field_seen
+    parsed["limits"] = limits
+    parsed["limit_axes"] = limit_axes
 
     return parsed
 
@@ -215,6 +269,7 @@ def _read_grbl_status_on_serial(ser: serial.Serial) -> dict[str, Any]:
 def _status_position(status: Optional[dict[str, Any]]) -> dict[str, Optional[float]]:
     with _ARM_POSITION_LOCK:
         tracked = dict(_ARM_XY_POSITION)
+        homed = _ARM_HOMED
 
     position: dict[str, Optional[float]] = {"x": None, "y": None}
     if not status:
@@ -227,7 +282,7 @@ def _status_position(status: Optional[dict[str, Any]]) -> dict[str, Optional[flo
     grbl_position = status.get("work_position") or status.get("machine_position") or {}
 
     for axis in ("x", "y"):
-        if limits.get(axis):
+        if homed and limits.get(axis):
             position[axis] = 0.0
         elif tracked.get(axis) is not None:
             position[axis] = tracked[axis]
@@ -243,9 +298,38 @@ def _apply_status_limits_to_tracked_position(status: Optional[dict[str, Any]]) -
 
     limits = status.get("limits") or {}
     with _ARM_POSITION_LOCK:
+        if not _ARM_HOMED:
+            return
         for axis in ("x", "y"):
             if limits.get(axis):
                 _ARM_XY_POSITION[axis] = 0.0
+
+
+def _set_arm_unhomed() -> None:
+    global _ARM_HOMED
+
+    with _ARM_POSITION_LOCK:
+        _ARM_HOMED = False
+        _ARM_XY_POSITION["x"] = None
+        _ARM_XY_POSITION["y"] = None
+
+
+def _set_arm_axis_zero(axis: str) -> None:
+    global _ARM_HOMED
+
+    with _ARM_POSITION_LOCK:
+        _ARM_XY_POSITION[axis] = 0.0
+        if _ARM_XY_POSITION["x"] == 0.0 and _ARM_XY_POSITION["y"] == 0.0:
+            _ARM_HOMED = True
+
+
+def _set_arm_homed_zero() -> None:
+    global _ARM_HOMED
+
+    with _ARM_POSITION_LOCK:
+        _ARM_HOMED = True
+        _ARM_XY_POSITION["x"] = 0.0
+        _ARM_XY_POSITION["y"] = 0.0
 
 
 def _apply_xy_delta_to_tracked_position(delta_x: float, delta_y: float, limit_axes: set[str]) -> None:
@@ -400,6 +484,18 @@ def _wait_for_grbl_idle(
                 continue
 
             lines.append(text)
+            lowered = text.lower()
+            if lowered.startswith("alarm") and checked_moving_axes:
+                return {
+                    "command": "?",
+                    "ack": "alarm_limit",
+                    "response": lines,
+                    "limit_triggered": True,
+                    "limit_axes": sorted(checked_moving_axes),
+                    "state": "Alarm",
+                    "stop": _stop_grbl_motion_for_limit(ser),
+                }
+
             parsed = _parse_grbl_status_line(text)
             state = parsed["state"] if parsed else _extract_grbl_state(text)
             if state is None:
@@ -576,6 +672,51 @@ def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
     return _run_grbl_commands([(command, wait_for_ok)])[0]
 
 
+def ensure_nc_limit_pin_setting() -> dict[str, Any]:
+    if not _get_configure_nc_limits_enabled():
+        return {"configured": False, "reason": "disabled"}
+
+    port = _get_grbl_port()
+    target = _get_limit_pins_invert_value()
+
+    with _GRBL_SERIAL_LOCK:
+        try:
+            ser, startup_lines = _ensure_grbl_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            settings = _send_grbl_on_serial(ser, "$$", wait_for_ok=True)
+            if startup_lines:
+                settings["startup"] = startup_lines
+
+            current: Optional[int] = None
+            for line in settings.get("response", []):
+                match = re.match(r"^\$5=(\d+)", line.strip())
+                if match:
+                    current = int(match.group(1))
+                    break
+
+            if current == target:
+                return {"configured": False, "setting": "$5", "value": current, "settings": settings}
+
+            set_result = _send_grbl_on_serial(ser, f"$5={target}", wait_for_ok=True)
+            return {
+                "configured": True,
+                "setting": "$5",
+                "previous": current,
+                "value": target,
+                "settings": settings,
+                "result": set_result,
+            }
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                _close_grbl_serial_locked()
+            raise
+        except Exception as exc:
+            _close_grbl_serial_locked()
+            raise HTTPException(status_code=500, detail=f"Failed to configure GRBL NC limits on {port}: {exc}") from exc
+
+
 def get_grbl_arm_status() -> dict[str, Any]:
     port = _get_grbl_port()
 
@@ -590,10 +731,13 @@ def get_grbl_arm_status() -> dict[str, Any]:
                 status["startup"] = startup_lines
             _apply_status_limits_to_tracked_position(status)
             status["position"] = _status_position(status)
+            with _ARM_POSITION_LOCK:
+                status["homed"] = _ARM_HOMED
             status["limit_toward_zero_sign"] = {
                 "x": _get_limit_toward_zero_sign("X"),
                 "y": _get_limit_toward_zero_sign("Y"),
             }
+            status["limit_pin_mode"] = _get_limit_pin_mode()
             return status
         except HTTPException as exc:
             if exc.status_code >= 500:
@@ -602,6 +746,103 @@ def get_grbl_arm_status() -> dict[str, Any]:
         except Exception as exc:
             _close_grbl_serial_locked()
             raise HTTPException(status_code=500, detail=f"Failed to read GRBL status on {port}: {exc}") from exc
+
+
+def _extract_limit_axes_from_results(results: list[dict[str, Any]]) -> set[str]:
+    limit_axes: set[str] = set()
+    for result in results:
+        if result.get("limit_triggered"):
+            limit_axes.update(result.get("limit_axes") or [])
+        idle = result.get("idle")
+        if isinstance(idle, dict) and idle.get("limit_triggered"):
+            limit_axes.update(idle.get("limit_axes") or [])
+    return limit_axes
+
+
+def _home_xy_axis(axis: str) -> dict[str, Any]:
+    axis = axis.lower()
+    if axis not in {"x", "y"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported homing axis: {axis}")
+
+    status = get_grbl_arm_status()
+    if (status.get("limits") or {}).get(axis):
+        _set_arm_axis_zero(axis)
+        return {
+            "axis": axis,
+            "already_at_limit": True,
+            "stopped_by_limit": True,
+            "limit_axes": [axis],
+            "status": status,
+        }
+
+    feed_rate = _get_home_xy_feed_rate()
+    distance = _get_home_xy_search_distance() * _get_limit_toward_zero_sign(axis)
+    command_axis = axis.upper()
+    moving_axes = {axis}
+    results = _run_grbl_commands(
+        [
+            ("G21", True),
+            ("G91", True),
+            (f"G1 {command_axis}{distance} F{feed_rate}", True),
+        ],
+        wait_for_idle=True,
+        observe_limit_axes=moving_axes,
+    )
+    limit_axes = _extract_limit_axes_from_results(results)
+    if axis not in limit_axes:
+        _set_arm_unhomed()
+        raise HTTPException(
+            status_code=504,
+            detail=f"XY homing failed: {axis.upper()} limit was not reached within {abs(distance)} mm.",
+        )
+
+    _set_arm_axis_zero(axis)
+    return {
+        "axis": axis,
+        "already_at_limit": False,
+        "stopped_by_limit": True,
+        "limit_axes": sorted(limit_axes),
+        "feed_rate": feed_rate,
+        "distance": distance,
+        "results": results,
+    }
+
+
+def home_xy_to_limits() -> dict[str, Any]:
+    _set_arm_unhomed()
+    axis_reports = []
+
+    try:
+        send_grbl("$X", wait_for_ok=True)
+    except HTTPException:
+        # $X is only needed when the controller booted in alarm/lock state.
+        pass
+
+    nc_limit_setting = ensure_nc_limit_pin_setting()
+
+    for axis in _get_home_xy_axis_order():
+        axis_reports.append(_home_xy_axis(axis))
+
+    _set_arm_homed_zero()
+    zero_result = None
+    try:
+        zero_result = _run_grbl_commands(
+            [
+                ("G10 L20 P1 X0 Y0", True),
+                ("G90", True),
+            ]
+        )
+    except HTTPException as exc:
+        zero_result = {"error": exc.detail}
+
+    return {
+        "action": "home_xy_to_limits",
+        "homed": True,
+        "position": {"x": 0.0, "y": 0.0},
+        "axis_reports": axis_reports,
+        "nc_limit_setting": nc_limit_setting,
+        "zero_result": zero_result,
+    }
 
 
 def _parse_sequence(raw_sequence: str) -> list[str]:
@@ -685,16 +926,8 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
         observe_limit_axes=moving_axes,
     )
 
-    limit_axes: set[str] = set()
-    stopped_by_limit = False
-    for result in results:
-        if result.get("limit_triggered"):
-            stopped_by_limit = True
-            limit_axes.update(result.get("limit_axes") or [])
-        idle = result.get("idle")
-        if isinstance(idle, dict) and idle.get("limit_triggered"):
-            stopped_by_limit = True
-            limit_axes.update(idle.get("limit_axes") or [])
+    limit_axes = _extract_limit_axes_from_results(results)
+    stopped_by_limit = bool(limit_axes)
 
     _apply_xy_delta_to_tracked_position(
         0.0 if stopped_by_limit else delta_x,
