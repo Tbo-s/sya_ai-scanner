@@ -82,10 +82,39 @@
         </v-card>
       </v-dialog>
 
+      <div class="arm-status-card">
+        <div class="arm-status-header">
+          <div>
+            <div class="control-title">Arm coordinaten</div>
+            <div class="secondary-text">0,0 is bij de X/Y-limits.</div>
+          </div>
+          <v-btn
+            icon="mdi-refresh"
+            variant="text"
+            :loading="armStatusBusy"
+            aria-label="Arm coordinaten vernieuwen"
+            @click="fetchArmStatus"
+          />
+        </div>
+        <div class="arm-coordinate-row">
+          <div class="arm-coordinate">X {{ formattedArmCoordinate("x") }} mm</div>
+          <div class="arm-coordinate">Y {{ formattedArmCoordinate("y") }} mm</div>
+        </div>
+        <div class="arm-limit-row">
+          <v-chip :color="armLimits.x ? 'warning' : 'success'" variant="tonal" size="small">
+            X limit: {{ armLimits.x ? "geraakt" : "vrij" }}
+          </v-chip>
+          <v-chip :color="armLimits.y ? 'warning' : 'success'" variant="tonal" size="small">
+            Y limit: {{ armLimits.y ? "geraakt" : "vrij" }}
+          </v-chip>
+        </div>
+        <div v-if="armStatusError" class="error-text">{{ armStatusError }}</div>
+      </div>
+
       <div class="control-grid">
         <div class="control-group">
           <div class="control-title">XY-axis</div>
-          <div class="control-status secondary-text">{{ manualXyStep }} mm per tik</div>
+          <div class="control-status secondary-text">{{ manualXyStep }} mm per tik · F{{ manualXyFeedRate }}</div>
           <div class="joystick-control" aria-label="XY-arm bediening">
             <div class="joystick-cell" />
             <v-btn
@@ -93,9 +122,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:forward')"
-              :disabled="Boolean(manualControlBusy)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
               aria-label="Arm naar voren"
-              @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.')"
+              @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
             >
               <v-icon>mdi-arrow-up</v-icon>
             </v-btn>
@@ -106,9 +135,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:left')"
-              :disabled="Boolean(manualControlBusy)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(manualXyStep, 0)"
               aria-label="Arm naar links"
-              @click="jogXY(manualXyStep, 0, 'Arm links gestuurd.')"
+              @click="jogXY(manualXyStep, 0, 'Arm links gestuurd.', 'xy:left')"
             >
               <v-icon>mdi-arrow-left</v-icon>
             </v-btn>
@@ -118,9 +147,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:right')"
-              :disabled="Boolean(manualControlBusy)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(-manualXyStep, 0)"
               aria-label="Arm naar rechts"
-              @click="jogXY(-manualXyStep, 0, 'Arm rechts gestuurd.')"
+              @click="jogXY(-manualXyStep, 0, 'Arm rechts gestuurd.', 'xy:right')"
             >
               <v-icon>mdi-arrow-right</v-icon>
             </v-btn>
@@ -131,9 +160,9 @@
               icon
               size="x-large"
               :loading="isManualActionBusy('xy:back')"
-              :disabled="Boolean(manualControlBusy)"
+              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
               aria-label="Arm naar achter"
-              @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.')"
+              @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
             >
               <v-icon>mdi-arrow-down</v-icon>
             </v-btn>
@@ -522,10 +551,26 @@ export default {
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
       manualXyStep: 1,
+      manualXyFeedRate: 60,
       manualControlBusy: "",
       manualControlError: "",
       manualControlSuccess: "",
       manualStatusBusy: false,
+      armStatusBusy: false,
+      armStatusError: "",
+      armStatusTimer: null,
+      armCoordinates: {
+        x: null,
+        y: null,
+      },
+      armLimits: {
+        x: false,
+        y: false,
+      },
+      armLimitTowardZeroSign: {
+        x: -1,
+        y: -1,
+      },
       manualStatus: {
         wrist1: null,
         wrist2: null,
@@ -572,9 +617,11 @@ export default {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
     this.loadRuntimeSettings();
     this.fetchManualStatus();
+    this.startArmStatusPolling();
   },
   beforeUnmount() {
     clearTimeout(this.timer);
+    this.stopArmStatusPolling();
     this.stopImeiDetection();
     this.stopCameraViewer();
     this.stopScanCamera();
@@ -587,9 +634,15 @@ export default {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
         this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 1);
+        this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 60);
+        this.armLimitTowardZeroSign = {
+          x: Number(response.data?.grbl_limit_toward_zero_sign?.x || -1),
+          y: Number(response.data?.grbl_limit_toward_zero_sign?.y || -1),
+        };
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
         this.manualXyStep = 1;
+        this.manualXyFeedRate = 60;
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
@@ -651,8 +704,77 @@ export default {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : null;
     },
+    parseManualStatusNumber(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    },
     parseManualStatusBool(value) {
       return String(value ?? "") === "1";
+    },
+    formattedArmCoordinate(axis) {
+      const value = this.armCoordinates[axis];
+      return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "--";
+    },
+    deltaMovesTowardLimit(axis, delta) {
+      if (!delta) {
+        return false;
+      }
+      const sign = this.armLimitTowardZeroSign[axis] || -1;
+      return sign > 0 ? delta > 0 : delta < 0;
+    },
+    xyLimitBlocks(deltaX, deltaY) {
+      return (
+        (this.armLimits.x && this.deltaMovesTowardLimit("x", deltaX)) ||
+        (this.armLimits.y && this.deltaMovesTowardLimit("y", deltaY))
+      );
+    },
+    startArmStatusPolling() {
+      this.stopArmStatusPolling();
+      this.fetchArmStatus();
+      this.armStatusTimer = setInterval(() => {
+        if (this.step === 0 && !this.manualControlBusy) {
+          this.fetchArmStatus();
+        }
+      }, 1500);
+    },
+    stopArmStatusPolling() {
+      if (this.armStatusTimer) {
+        clearInterval(this.armStatusTimer);
+        this.armStatusTimer = null;
+      }
+    },
+    updateArmStatus(status) {
+      const position = status?.position || {};
+      const limits = status?.limits || {};
+      this.armCoordinates = {
+        x: this.parseManualStatusNumber(position.x),
+        y: this.parseManualStatusNumber(position.y),
+      };
+      this.armLimits = {
+        x: Boolean(limits.x),
+        y: Boolean(limits.y),
+      };
+      if (status?.limit_toward_zero_sign) {
+        this.armLimitTowardZeroSign = {
+          x: Number(status.limit_toward_zero_sign.x || -1),
+          y: Number(status.limit_toward_zero_sign.y || -1),
+        };
+      }
+    },
+    async fetchArmStatus() {
+      if (this.armStatusBusy) {
+        return;
+      }
+      this.armStatusBusy = true;
+      try {
+        const response = await axios.get("/api/arduino/grbl/status");
+        this.updateArmStatus(response.data || {});
+        this.armStatusError = "";
+      } catch (error) {
+        this.armStatusError = error?.response?.data?.detail || "Kon arm coordinaten niet ophalen.";
+      } finally {
+        this.armStatusBusy = false;
+      }
     },
     async fetchManualStatus() {
       this.manualStatusBusy = true;
@@ -707,11 +829,24 @@ export default {
       const label = delta > 0 ? `Z-as +${delta} gestuurd.` : `Z-as ${delta} gestuurd.`;
       await this.runManualAction(`z:${delta}`, label, () => axios.post("/api/arduino/grbl/z/jog", { delta }));
     },
-    async jogXY(deltaX, deltaY, label) {
+    async jogXY(deltaX, deltaY, label, actionKey) {
       await this.runManualAction(
-        `xy:${deltaX}:${deltaY}`,
+        actionKey || `xy:${deltaX}:${deltaY}`,
         label,
-        () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY })
+        () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY }),
+        (data) => {
+          if (data?.position) {
+            this.armCoordinates = {
+              x: this.parseManualStatusNumber(data.position.x),
+              y: this.parseManualStatusNumber(data.position.y),
+            };
+          }
+          if (data?.stopped_by_limit) {
+            const axes = (data.limit_axes || []).join(", ").toUpperCase();
+            this.manualControlSuccess = `Limit geraakt${axes ? ` (${axes})` : ""}; beweging gestopt.`;
+          }
+          this.fetchArmStatus();
+        }
       );
     },
     async moveTray(command) {
@@ -768,6 +903,7 @@ export default {
           this.manualStatus.vac2 = false;
           this.manualStatus.valve1 = false;
           this.manualStatus.valve2 = false;
+          this.fetchArmStatus();
         }
       );
     },
@@ -1145,6 +1281,7 @@ export default {
         this.beginStartupTestSpin();
       }
       this.fetchManualStatus();
+      this.fetchArmStatus();
     },
   },
 };
@@ -1207,6 +1344,43 @@ export default {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 14px;
+}
+
+.arm-status-card {
+  width: 100%;
+  max-width: 760px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.arm-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+}
+
+.arm-coordinate-row,
+.arm-limit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.arm-coordinate {
+  min-width: 130px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 10px 14px;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 .control-group {

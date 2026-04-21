@@ -8,6 +8,7 @@ from typing import Any, Optional
 import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
+    get_grbl_arm_status,
     is_safe_grbl_command as service_is_safe_grbl_command,
     manual_xy_move,
     manual_z_down,
@@ -376,6 +377,11 @@ def grbl_home():
 def grbl_stop():
     # Feed hold / immediate stop signal for GRBL.
     return _send_grbl("!", wait_for_ok=False)
+
+
+@router.get("/arduino/grbl/status", tags=["Arduino"])
+def grbl_status():
+    return get_grbl_arm_status()
 
 
 @router.post("/arduino/grbl/z/up", tags=["Arduino"])

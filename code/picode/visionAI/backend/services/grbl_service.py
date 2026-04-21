@@ -16,6 +16,8 @@ _GRBL_SERIAL_LOCK = threading.Lock()
 _GRBL_SERIAL: Optional[serial.Serial] = None
 _GRBL_SERIAL_PORT: Optional[str] = None
 _GRBL_SERIAL_BAUD: Optional[int] = None
+_ARM_POSITION_LOCK = threading.Lock()
+_ARM_XY_POSITION: dict[str, Optional[float]] = {"x": None, "y": None}
 
 
 def _get_grbl_port() -> str:
@@ -32,6 +34,10 @@ def _get_grbl_read_timeout_s() -> float:
 
 def _get_grbl_motion_timeout_s() -> float:
     return float(os.getenv("APP_GRBL_MOTION_TIMEOUT_S", "5.0"))
+
+
+def _get_grbl_status_timeout_s() -> float:
+    return max(0.1, float(os.getenv("APP_GRBL_STATUS_TIMEOUT_S", "1.0")))
 
 
 def _get_grbl_startup_delay_s() -> float:
@@ -72,7 +78,12 @@ def _get_manual_xy_step() -> float:
 
 
 def _get_manual_xy_feed_rate() -> int:
-    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120"))
+    return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60"))
+
+
+def _get_limit_toward_zero_sign(axis: str) -> int:
+    raw = os.getenv(f"APP_GRBL_{axis.upper()}_LIMIT_TOWARD_ZERO_SIGN", "-1").strip().lower()
+    return 1 if raw in {"1", "+1", "+", "positive", "pos"} else -1
 
 
 def is_safe_grbl_command(command: str) -> bool:
@@ -123,6 +134,205 @@ def _read_grbl_lines(ser: serial.Serial, duration_s: float) -> list[str]:
     return lines
 
 
+def _parse_grbl_position(value: str) -> Optional[dict[str, float]]:
+    parts = value.split(",")
+    if len(parts) < 3:
+        return None
+
+    try:
+        return {
+            "x": float(parts[0]),
+            "y": float(parts[1]),
+            "z": float(parts[2]),
+        }
+    except ValueError:
+        return None
+
+
+def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
+    stripped = line.strip()
+    if not stripped.startswith("<") or not stripped.endswith(">"):
+        return None
+
+    fields = stripped[1:-1].split("|")
+    if not fields or not fields[0]:
+        return None
+
+    parsed: dict[str, Any] = {
+        "raw": stripped,
+        "state": fields[0],
+        "machine_position": None,
+        "work_position": None,
+        "pin_state": "",
+        "limit_axes": [],
+        "limits": {"x": False, "y": False},
+    }
+
+    for field in fields[1:]:
+        if ":" not in field:
+            continue
+        key, value = field.split(":", 1)
+        if key == "MPos":
+            parsed["machine_position"] = _parse_grbl_position(value)
+        elif key == "WPos":
+            parsed["work_position"] = _parse_grbl_position(value)
+        elif key == "Pn":
+            pins = value.upper()
+            parsed["pin_state"] = pins
+            parsed["limits"] = {
+                "x": "X" in pins,
+                "y": "Y" in pins,
+            }
+            parsed["limit_axes"] = [axis for axis in ("x", "y") if parsed["limits"][axis]]
+
+    return parsed
+
+
+def _read_grbl_status_on_serial(ser: serial.Serial) -> dict[str, Any]:
+    timeout_s = _get_grbl_status_timeout_s()
+    started_at = time.time()
+    lines: list[str] = []
+
+    ser.write(b"?")
+
+    while time.time() - started_at < timeout_s:
+        raw = ser.readline()
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if not text:
+            continue
+
+        lines.append(text)
+        parsed = _parse_grbl_status_line(text)
+        if parsed is not None:
+            parsed["response"] = lines
+            return parsed
+
+    raise HTTPException(status_code=504, detail="GRBL status timed out.")
+
+
+def _status_position(status: Optional[dict[str, Any]]) -> dict[str, Optional[float]]:
+    with _ARM_POSITION_LOCK:
+        tracked = dict(_ARM_XY_POSITION)
+
+    position: dict[str, Optional[float]] = {"x": None, "y": None}
+    if not status:
+        return {
+            "x": tracked.get("x"),
+            "y": tracked.get("y"),
+        }
+
+    limits = status.get("limits") or {}
+    grbl_position = status.get("work_position") or status.get("machine_position") or {}
+
+    for axis in ("x", "y"):
+        if limits.get(axis):
+            position[axis] = 0.0
+        elif tracked.get(axis) is not None:
+            position[axis] = tracked[axis]
+        elif isinstance(grbl_position, dict) and grbl_position.get(axis) is not None:
+            position[axis] = max(0.0, float(grbl_position[axis]))
+
+    return position
+
+
+def _apply_status_limits_to_tracked_position(status: Optional[dict[str, Any]]) -> None:
+    if not status:
+        return
+
+    limits = status.get("limits") or {}
+    with _ARM_POSITION_LOCK:
+        for axis in ("x", "y"):
+            if limits.get(axis):
+                _ARM_XY_POSITION[axis] = 0.0
+
+
+def _apply_xy_delta_to_tracked_position(delta_x: float, delta_y: float, limit_axes: set[str]) -> None:
+    with _ARM_POSITION_LOCK:
+        if "x" in limit_axes:
+            _ARM_XY_POSITION["x"] = 0.0
+        elif abs(delta_x) > 1e-9 and _ARM_XY_POSITION["x"] is not None:
+            _ARM_XY_POSITION["x"] = max(0.0, _ARM_XY_POSITION["x"] + delta_x)
+
+        if "y" in limit_axes:
+            _ARM_XY_POSITION["y"] = 0.0
+        elif abs(delta_y) > 1e-9 and _ARM_XY_POSITION["y"] is not None:
+            _ARM_XY_POSITION["y"] = max(0.0, _ARM_XY_POSITION["y"] + delta_y)
+
+
+def _delta_moves_toward_zero(axis: str, delta: float) -> bool:
+    if abs(delta) <= 1e-9:
+        return False
+    sign = _get_limit_toward_zero_sign(axis)
+    return delta > 0 if sign > 0 else delta < 0
+
+
+def _limit_stop_axes_for_xy_delta(delta_x: float, delta_y: float) -> set[str]:
+    axes = set()
+    if _delta_moves_toward_zero("X", delta_x):
+        axes.add("x")
+    if _delta_moves_toward_zero("Y", delta_y):
+        axes.add("y")
+    return axes
+
+
+def _moving_axes_for_xy_delta(delta_x: float, delta_y: float) -> set[str]:
+    axes = set()
+    if abs(delta_x) > 1e-9:
+        axes.add("x")
+    if abs(delta_y) > 1e-9:
+        axes.add("y")
+    return axes
+
+
+def _limit_result_from_status(status: dict[str, Any], checked_axes: set[str]) -> Optional[dict[str, Any]]:
+    active_axes = set(status.get("limit_axes") or [])
+    triggered_axes = active_axes & checked_axes
+    if not triggered_axes:
+        return None
+
+    return {
+        "command": "?",
+        "ack": "limit",
+        "response": status.get("response", []),
+        "limit_triggered": True,
+        "limit_axes": sorted(triggered_axes),
+        "status": status,
+    }
+
+
+def _stop_grbl_motion_for_limit(ser: serial.Serial) -> dict[str, Any]:
+    stop_report: dict[str, Any] = {"feed_hold_sent": False, "soft_reset_sent": False}
+
+    try:
+        ser.write(b"!")
+        stop_report["feed_hold_sent"] = True
+    except Exception as exc:
+        stop_report["feed_hold_error"] = str(exc)
+
+    time.sleep(0.05)
+
+    try:
+        ser.write(b"\x18")
+        stop_report["soft_reset_sent"] = True
+        stop_report["reset_response"] = _read_grbl_lines(ser, max(0.5, _get_grbl_startup_delay_s()))
+    except Exception as exc:
+        stop_report["soft_reset_error"] = str(exc)
+
+    try:
+        stop_report["unlock"] = _send_grbl_on_serial(ser, "$X", wait_for_ok=True)
+    except HTTPException as exc:
+        stop_report["unlock_error"] = exc.detail
+
+    try:
+        stop_report["absolute"] = _send_grbl_on_serial(ser, "G90", wait_for_ok=True)
+    except HTTPException as exc:
+        stop_report["absolute_error"] = exc.detail
+
+    return stop_report
+
+
 def _send_grbl_on_serial(ser: serial.Serial, command: str, wait_for_ok: bool = True) -> dict[str, Any]:
     normalized = _normalize_command(command)
     timeout_s = _get_grbl_read_timeout_s()
@@ -162,11 +372,19 @@ def _extract_grbl_state(line: str) -> Optional[str]:
     return body.split("|", 1)[0].strip() or None
 
 
-def _wait_for_grbl_idle(ser: serial.Serial) -> dict[str, Any]:
+def _wait_for_grbl_idle(
+    ser: serial.Serial,
+    limit_stop_axes: Optional[set[str]] = None,
+    moving_limit_axes: Optional[set[str]] = None,
+    initial_limit_axes: Optional[set[str]] = None,
+) -> dict[str, Any]:
     timeout_s = _get_grbl_motion_timeout_s()
     read_timeout_s = _get_grbl_read_timeout_s()
     started_at = time.time()
     lines: list[str] = []
+    checked_limit_axes = limit_stop_axes or set()
+    checked_moving_axes = moving_limit_axes or set()
+    starting_limit_axes = initial_limit_axes or set()
 
     while time.time() - started_at < timeout_s:
         ser.write(b"?")
@@ -182,9 +400,32 @@ def _wait_for_grbl_idle(ser: serial.Serial) -> dict[str, Any]:
                 continue
 
             lines.append(text)
-            state = _extract_grbl_state(text)
+            parsed = _parse_grbl_status_line(text)
+            state = parsed["state"] if parsed else _extract_grbl_state(text)
             if state is None:
                 continue
+
+            if parsed is not None:
+                parsed["response"] = lines
+                limit_result = _limit_result_from_status(parsed, checked_limit_axes)
+                if limit_result is None:
+                    active_axes = set(parsed.get("limit_axes") or [])
+                    newly_active_axes = (active_axes & checked_moving_axes) - starting_limit_axes
+                    if newly_active_axes:
+                        limit_result = {
+                            "command": "?",
+                            "ack": "limit",
+                            "response": lines,
+                            "limit_triggered": True,
+                            "limit_axes": sorted(newly_active_axes),
+                            "status": parsed,
+                        }
+                if limit_result is not None:
+                    limit_result["state"] = state
+                    if state != "Idle":
+                        limit_result["stop"] = _stop_grbl_motion_for_limit(ser)
+                    return limit_result
+
             if state == "Idle":
                 return {"state": state, "response": lines}
             if state == "Alarm":
@@ -274,7 +515,13 @@ def _ensure_grbl_serial() -> tuple[serial.Serial, list[str]]:
 atexit.register(_close_grbl_serial)
 
 
-def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = False) -> list[dict[str, Any]]:
+def _run_grbl_commands(
+    commands: list[tuple[str, bool]],
+    wait_for_idle: bool = False,
+    precheck_limit_axes: Optional[set[str]] = None,
+    limit_stop_axes: Optional[set[str]] = None,
+    observe_limit_axes: Optional[set[str]] = None,
+) -> list[dict[str, Any]]:
     port = _get_grbl_port()
 
     with _GRBL_SERIAL_LOCK:
@@ -282,6 +529,24 @@ def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = F
             ser, startup_lines = _ensure_grbl_serial()
             if hasattr(ser, "reset_input_buffer"):
                 ser.reset_input_buffer()
+
+            initial_limit_axes: set[str] = set()
+            if precheck_limit_axes or observe_limit_axes:
+                try:
+                    status = _read_grbl_status_on_serial(ser)
+                    _apply_status_limits_to_tracked_position(status)
+                    initial_limit_axes = set(status.get("limit_axes") or []) & (observe_limit_axes or set())
+                    if precheck_limit_axes:
+                        limit_result = _limit_result_from_status(status, precheck_limit_axes)
+                        if limit_result is not None:
+                            if startup_lines:
+                                limit_result["startup"] = startup_lines
+                            return [limit_result]
+                except HTTPException:
+                    # If realtime status is unavailable, still send the jog command.
+                    # The movement command itself will surface serial/GRBL failures.
+                    pass
+
             results = []
             for index, (command, wait_for_ok) in enumerate(commands):
                 result = _send_grbl_on_serial(ser, command, wait_for_ok=wait_for_ok)
@@ -289,7 +554,12 @@ def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = F
                     result["startup"] = startup_lines
                 results.append(result)
             if wait_for_idle:
-                idle_result = _wait_for_grbl_idle(ser)
+                idle_result = _wait_for_grbl_idle(
+                    ser,
+                    limit_stop_axes=limit_stop_axes,
+                    moving_limit_axes=observe_limit_axes,
+                    initial_limit_axes=initial_limit_axes,
+                )
                 if results:
                     results[-1]["idle"] = idle_result
             return results
@@ -304,6 +574,34 @@ def _run_grbl_commands(commands: list[tuple[str, bool]], wait_for_idle: bool = F
 
 def send_grbl(command: str, wait_for_ok: bool = True) -> dict[str, Any]:
     return _run_grbl_commands([(command, wait_for_ok)])[0]
+
+
+def get_grbl_arm_status() -> dict[str, Any]:
+    port = _get_grbl_port()
+
+    with _GRBL_SERIAL_LOCK:
+        try:
+            ser, startup_lines = _ensure_grbl_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            status = _read_grbl_status_on_serial(ser)
+            if startup_lines:
+                status["startup"] = startup_lines
+            _apply_status_limits_to_tracked_position(status)
+            status["position"] = _status_position(status)
+            status["limit_toward_zero_sign"] = {
+                "x": _get_limit_toward_zero_sign("X"),
+                "y": _get_limit_toward_zero_sign("Y"),
+            }
+            return status
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                _close_grbl_serial_locked()
+            raise
+        except Exception as exc:
+            _close_grbl_serial_locked()
+            raise HTTPException(status_code=500, detail=f"Failed to read GRBL status on {port}: {exc}") from exc
 
 
 def _parse_sequence(raw_sequence: str) -> list[str]:
@@ -357,7 +655,7 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
     }
 
 
-def _format_xy_jog_command(delta_x: float, delta_y: float) -> str:
+def _format_xy_jog_command(delta_x: float, delta_y: float, feed_rate: int) -> str:
     axis_parts = []
 
     if abs(delta_x) > 1e-9:
@@ -368,20 +666,49 @@ def _format_xy_jog_command(delta_x: float, delta_y: float) -> str:
     if not axis_parts:
         raise HTTPException(status_code=400, detail="At least one XY jog delta must be non-zero.")
 
-    return f"G0 {' '.join(axis_parts)}"
+    return f"G1 {' '.join(axis_parts)} F{feed_rate}"
 
 
 def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
+    feed_rate = _get_manual_xy_feed_rate()
+    limit_stop_axes = _limit_stop_axes_for_xy_delta(delta_x, delta_y)
+    moving_axes = _moving_axes_for_xy_delta(delta_x, delta_y)
+    results = _run_grbl_commands(
+        [
+            ("G21", True),
+            ("G91", True),
+            (_format_xy_jog_command(delta_x, delta_y, feed_rate), True),
+        ],
+        wait_for_idle=True,
+        precheck_limit_axes=limit_stop_axes,
+        limit_stop_axes=limit_stop_axes,
+        observe_limit_axes=moving_axes,
+    )
+
+    limit_axes: set[str] = set()
+    stopped_by_limit = False
+    for result in results:
+        if result.get("limit_triggered"):
+            stopped_by_limit = True
+            limit_axes.update(result.get("limit_axes") or [])
+        idle = result.get("idle")
+        if isinstance(idle, dict) and idle.get("limit_triggered"):
+            stopped_by_limit = True
+            limit_axes.update(idle.get("limit_axes") or [])
+
+    _apply_xy_delta_to_tracked_position(
+        0.0 if stopped_by_limit else delta_x,
+        0.0 if stopped_by_limit else delta_y,
+        limit_axes,
+    )
+
     return {
         "action": action,
-        "results": _run_grbl_commands(
-            [
-                ("G21", True),
-                ("G91", True),
-                (_format_xy_jog_command(delta_x, delta_y), True),
-            ],
-            wait_for_idle=True,
-        ),
+        "feed_rate": feed_rate,
+        "stopped_by_limit": stopped_by_limit,
+        "limit_axes": sorted(limit_axes),
+        "position": _status_position(None),
+        "results": results,
     }
 
 

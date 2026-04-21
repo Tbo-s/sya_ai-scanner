@@ -8,6 +8,11 @@ def _is_enabled(env_name: str, default: str = "0") -> bool:
     return os.getenv(env_name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _limit_toward_zero_sign(axis: str) -> int:
+    raw = os.getenv(f"APP_GRBL_{axis.upper()}_LIMIT_TOWARD_ZERO_SIGN", "-1").strip().lower()
+    return 1 if raw in {"1", "+1", "+", "positive", "pos"} else -1
+
+
 def get_runtime_settings() -> dict[str, Any]:
     return {
         "auto_safe_idle_on_boot": _is_enabled("APP_MACHINE_SAFE_IDLE_ON_BOOT", "1"),
@@ -15,6 +20,11 @@ def get_runtime_settings() -> dict[str, Any]:
         "auto_grbl_test_spin_on_ui_start": _is_enabled("APP_GRBL_TEST_SPIN_ON_UI_START", "1"),
         "grbl_boot_sequence": os.getenv("APP_GRBL_BOOT_SEQUENCE", "$X|$H"),
         "grbl_manual_xy_step": float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "1.0")),
+        "grbl_manual_xy_feed_rate": int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "60")),
+        "grbl_limit_toward_zero_sign": {
+            "x": _limit_toward_zero_sign("X"),
+            "y": _limit_toward_zero_sign("Y"),
+        },
         "frontend_dist_dir": os.getenv("APP_FRONTEND_DIST", "").strip() or "frontend/dist",
         "camera_index": int(os.getenv("APP_CAMERA_INDEX", "0")),
         "photo_storage_dir": os.getenv("APP_PHOTO_STORAGE_DIR", "/tmp/sya_photos"),
