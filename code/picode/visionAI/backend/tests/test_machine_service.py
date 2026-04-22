@@ -55,7 +55,7 @@ def test_get_status_values_retries_until_parseable(monkeypatch):
         ],
     ]
 
-    def fake_send_with_response(command):
+    def fake_send_with_response(command, **_kwargs):
         assert command == "STATUS"
         return responses.pop(0)
 

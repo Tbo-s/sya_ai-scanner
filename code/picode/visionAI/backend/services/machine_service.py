@@ -2,7 +2,7 @@ import os
 import re
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import HTTPException
 import serial  # type: ignore
@@ -11,6 +11,9 @@ import serial  # type: ignore
 GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
 STATUS_LINE_PATTERN = re.compile(r"^gateState=.*\btrayInSw=\d+\s*$")
 _LEONARDO_SERIAL_LOCK = threading.RLock()
+_LEONARDO_SERIAL: Optional[serial.Serial] = None
+_LEONARDO_SERIAL_PORT = ""
+_LEONARDO_SERIAL_BAUD = 0
 
 
 def _get_leonardo_port() -> str:
@@ -49,49 +52,86 @@ def _get_wrist_smooth_delay_ms() -> int:
     return max(0, int(os.getenv("APP_WRIST_SMOOTH_DELAY_MS", "25")))
 
 
-def _send_line(line: str):
+def _close_leonardo_serial():
+    global _LEONARDO_SERIAL, _LEONARDO_SERIAL_PORT, _LEONARDO_SERIAL_BAUD
+    if _LEONARDO_SERIAL is not None:
+        try:
+            _LEONARDO_SERIAL.close()
+        except Exception:
+            pass
+    _LEONARDO_SERIAL = None
+    _LEONARDO_SERIAL_PORT = ""
+    _LEONARDO_SERIAL_BAUD = 0
+
+
+def _get_leonardo_serial() -> serial.Serial:
+    global _LEONARDO_SERIAL, _LEONARDO_SERIAL_PORT, _LEONARDO_SERIAL_BAUD
+
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
+    if (
+        _LEONARDO_SERIAL is not None
+        and getattr(_LEONARDO_SERIAL, "is_open", True)
+        and _LEONARDO_SERIAL_PORT == port
+        and _LEONARDO_SERIAL_BAUD == baudrate
+    ):
+        return _LEONARDO_SERIAL
+
+    _close_leonardo_serial()
+    _LEONARDO_SERIAL = serial.Serial(port, baudrate, timeout=0.2)
+    _LEONARDO_SERIAL_PORT = port
+    _LEONARDO_SERIAL_BAUD = baudrate
+
+    open_delay_s = _get_leonardo_open_delay_s()
+    if open_delay_s > 0:
+        time.sleep(open_delay_s)
+    if hasattr(_LEONARDO_SERIAL, "reset_input_buffer"):
+        _LEONARDO_SERIAL.reset_input_buffer()
+
+    return _LEONARDO_SERIAL
+
+
+def _send_line(line: str):
+    port = _get_leonardo_port()
     try:
         with _LEONARDO_SERIAL_LOCK:
-            with serial.Serial(port, baudrate, timeout=1) as ser:
-                open_delay_s = _get_leonardo_open_delay_s()
-                if open_delay_s > 0:
-                    time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
-                ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
+            ser = _get_leonardo_serial()
+            ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
     except Exception as exc:
+        _close_leonardo_serial()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to talk to serial device on {port}: {exc}",
         ) from exc
 
 
-def _send_with_response(command: str, timeout_s: Optional[float] = None) -> list[str]:
+def _send_with_response(
+    command: str,
+    timeout_s: Optional[float] = None,
+    stop_when: Optional[Callable[[str], bool]] = None,
+) -> list[str]:
     port = _get_leonardo_port()
-    baudrate = _get_leonardo_baud()
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
     try:
         with _LEONARDO_SERIAL_LOCK:
-            with serial.Serial(port, baudrate, timeout=0.2) as ser:
-                open_delay_s = _get_leonardo_open_delay_s()
-                if open_delay_s > 0:
-                    time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
-                ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                started_at = time.time()
-                lines: list[str] = []
-                while time.time() - started_at < read_timeout_s:
-                    raw = ser.readline()
-                    if not raw:
-                        continue
-                    text = raw.decode("utf-8", errors="ignore").strip()
-                    if text:
-                        lines.append(text)
-                return lines
+            ser = _get_leonardo_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+            ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+            started_at = time.time()
+            lines: list[str] = []
+            while time.time() - started_at < read_timeout_s:
+                raw = ser.readline()
+                if not raw:
+                    continue
+                text = raw.decode("utf-8", errors="ignore").strip()
+                if text:
+                    lines.append(text)
+                    if stop_when is not None and stop_when(text):
+                        return lines
+            return lines
     except Exception as exc:
+        _close_leonardo_serial()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to talk to serial device on {port}: {exc}",
@@ -111,6 +151,10 @@ def _extract_status_line(lines: list[str]) -> Optional[str]:
         if STATUS_LINE_PATTERN.match(line.strip()):
             return line.strip()
     return None
+
+
+def _line_matches_pattern(pattern: re.Pattern, line: str) -> bool:
+    return pattern.match(line.strip()) is not None
 
 
 def _parse_status_values(status_line: str) -> dict[str, str]:
@@ -179,32 +223,29 @@ def _flatten_command_responses(results: list[dict]) -> list[str]:
 
 def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float] = None) -> list[dict]:
     port = _get_leonardo_port()
-    baudrate = _get_leonardo_baud()
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
     try:
         with _LEONARDO_SERIAL_LOCK:
-            with serial.Serial(port, baudrate, timeout=0.2) as ser:
-                open_delay_s = _get_leonardo_open_delay_s()
-                if open_delay_s > 0:
-                    time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
+            ser = _get_leonardo_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
 
-                results: list[dict] = []
-                for command in commands:
-                    ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                    started_at = time.time()
-                    lines: list[str] = []
-                    while time.time() - started_at < read_timeout_s:
-                        raw = ser.readline()
-                        if not raw:
-                            continue
-                        text = raw.decode("utf-8", errors="ignore").strip()
-                        if text:
-                            lines.append(text)
-                    results.append({"command": command, "response": lines})
-                return results
+            results: list[dict] = []
+            for command in commands:
+                ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+                started_at = time.time()
+                lines: list[str] = []
+                while time.time() - started_at < read_timeout_s:
+                    raw = ser.readline()
+                    if not raw:
+                        continue
+                    text = raw.decode("utf-8", errors="ignore").strip()
+                    if text:
+                        lines.append(text)
+                results.append({"command": command, "response": lines})
+            return results
     except Exception as exc:
+        _close_leonardo_serial()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to talk to serial device on {port}: {exc}",
@@ -241,7 +282,10 @@ def _get_status_values() -> tuple[dict[str, str], list[str]]:
         retries = _get_leonardo_status_retries()
 
         for attempt in range(1, retries + 1):
-            lines = _send_with_response("STATUS")
+            lines = _send_with_response(
+                "STATUS",
+                stop_when=lambda line: _line_matches_pattern(STATUS_LINE_PATTERN, line),
+            )
             attempts.append({"attempt": attempt, "response": lines})
             all_lines.extend(lines)
 
@@ -305,8 +349,16 @@ def tray_in() -> dict:
     return {"command": "TRAY_IN", "sent": True}
 
 
+def tray_stop() -> dict:
+    _send_line("TRAY_STOP")
+    return {"command": "TRAY_STOP", "sent": True}
+
+
 def get_gate_position() -> dict:
-    lines = _send_with_response("GATE_POS")
+    lines = _send_with_response(
+        "GATE_POS",
+        stop_when=lambda line: _line_matches_pattern(GATE_POSITION_PATTERN, line),
+    )
     position = _extract_gate_position(lines)
     return {
         "command": "GATE_POS",
@@ -318,7 +370,10 @@ def get_gate_position() -> dict:
 
 
 def get_tray_position() -> dict:
-    lines = _send_with_response("STATUS")
+    lines = _send_with_response(
+        "STATUS",
+        stop_when=lambda line: _line_matches_pattern(STATUS_LINE_PATTERN, line),
+    )
     status_line = _extract_status_line(lines)
     if not status_line:
         return {
@@ -388,7 +443,11 @@ def _set_binary_output(
 ) -> dict:
     command = command_on if enabled else command_off
     expected = done_on if enabled else done_off
-    lines = _send_with_response(command)
+    lines = _send_with_response(
+        command,
+        timeout_s=0.6,
+        stop_when=lambda line: expected in line,
+    )
     done = _contains_token(lines, expected)
     if raise_on_no_ack:
         return _require_done(command, done, lines) | {"enabled": enabled}
@@ -479,7 +538,10 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
     done_prefix = f"WRIST{wrist_index}_DONE:"
 
     if current_angle is None:
-        lines = _send_with_response(f"{command_prefix}{target_angle}")
+        lines = _send_with_response(
+            f"{command_prefix}{target_angle}",
+            stop_when=lambda line: f"{done_prefix}{target_angle}" in line,
+        )
         done = any(f"{done_prefix}{target_angle}" in line for line in lines)
         time.sleep(_get_wrist_dwell_ms() / 1000.0)
         return _require_done(f"{command_prefix}{target_angle}", done, lines) | {"angle": target_angle, "smoothed": False}
@@ -512,26 +574,22 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
         angles.append(next_angle)
 
     port = _get_leonardo_port()
-    baudrate = _get_leonardo_baud()
     try:
         with _LEONARDO_SERIAL_LOCK:
-            with serial.Serial(port, baudrate, timeout=0.2) as ser:
-                open_delay_s = _get_leonardo_open_delay_s()
-                if open_delay_s > 0:
-                    time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
+            ser = _get_leonardo_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
 
-                results: list[dict] = []
-                for index, angle in enumerate(angles):
-                    command = f"{command_prefix}{angle}"
-                    lines = _send_command_until_token(ser, command, (f"{done_prefix}{angle}",))
-                    done = any(f"{done_prefix}{angle}" in line for line in lines)
-                    if not done:
-                        raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
-                    results.append({"command": command, "response": lines})
-                    if delay_s > 0 and index < len(angles) - 1:
-                        time.sleep(delay_s)
+            results: list[dict] = []
+            for index, angle in enumerate(angles):
+                command = f"{command_prefix}{angle}"
+                lines = _send_command_until_token(ser, command, (f"{done_prefix}{angle}",))
+                done = any(f"{done_prefix}{angle}" in line for line in lines)
+                if not done:
+                    raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
+                results.append({"command": command, "response": lines})
+                if delay_s > 0 and index < len(angles) - 1:
+                    time.sleep(delay_s)
     except HTTPException:
         raise
     except Exception as exc:
@@ -573,7 +631,10 @@ def wrist_home() -> dict:
 
 
 def read_distance() -> dict:
-    lines = _send_with_response("DISTANCE_MM")
+    lines = _send_with_response(
+        "DISTANCE_MM",
+        stop_when=lambda line: line.startswith("DISTANCE_MM=") or line.startswith("DIST="),
+    )
     for line in lines:
         if line.startswith("DISTANCE_MM="):
             try:
@@ -609,9 +670,9 @@ def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_GATE_MOVE_TIMEOUT_S", "10"))
     port = _get_leonardo_port()
-    baudrate = _get_leonardo_baud()
     try:
-        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+        with _LEONARDO_SERIAL_LOCK:
+            ser = _get_leonardo_serial()
             started = time.time()
             while time.time() - started < timeout_s:
                 raw = ser.readline()
@@ -624,6 +685,7 @@ def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
+        _close_leonardo_serial()
         raise HTTPException(status_code=500, detail=f"wait_for_gate_done error: {exc}") from exc
 
 
@@ -631,9 +693,9 @@ def wait_for_tray_done(timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_TRAY_MOVE_TIMEOUT_S", "10"))
     port = _get_leonardo_port()
-    baudrate = _get_leonardo_baud()
     try:
-        with serial.Serial(port, baudrate, timeout=0.2) as ser:
+        with _LEONARDO_SERIAL_LOCK:
+            ser = _get_leonardo_serial()
             started = time.time()
             while time.time() - started < timeout_s:
                 raw = ser.readline()
@@ -646,4 +708,5 @@ def wait_for_tray_done(timeout_s: Optional[float] = None) -> dict:
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
+        _close_leonardo_serial()
         raise HTTPException(status_code=500, detail=f"wait_for_tray_done error: {exc}") from exc

@@ -36,6 +36,7 @@ from services.machine_service import (
     set_vacuum2_motor as machine_set_vacuum2_motor,
     tray_in as machine_tray_in,
     tray_out as machine_tray_out,
+    tray_stop as machine_tray_stop,
 )
 
 
@@ -81,7 +82,7 @@ ARDUINO_USB_VIDS = {0x2341, 0x2A03}
 ARDUINO_LEONARDO_PIDS = {0x0036, 0x8036}
 ARDUINO_MEGA_PIDS = {0x0010, 0x0042, 0x0242}
 ALLOWED_GATE_COMMANDS = {"GATE_OPEN", "GATE_CLOSE"}
-ALLOWED_TRAY_COMMANDS = {"TRAY_OUT", "TRAY_IN"}
+ALLOWED_TRAY_COMMANDS = {"TRAY_OUT", "TRAY_IN", "TRAY_STOP"}
 
 
 def _get_leonardo_port() -> str:
@@ -296,8 +297,10 @@ def send_leonardo_tray_command(payload: TrayCommand):
 
     if normalized == "TRAY_OUT":
         machine_tray_out()
-    else:
+    elif normalized == "TRAY_IN":
         machine_tray_in()
+    else:
+        machine_tray_stop()
     return {"command": normalized}
 
 

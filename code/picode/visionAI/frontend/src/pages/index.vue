@@ -225,6 +225,16 @@
             >
               CLOSE
             </v-btn>
+            <v-btn
+              color="error"
+              variant="outlined"
+              prepend-icon="mdi-stop"
+              :loading="isManualActionBusy('tray:stop')"
+              :disabled="trayStopDisabled()"
+              @click="stopTray"
+            >
+              STOP
+            </v-btn>
           </div>
         </div>
 
@@ -961,6 +971,34 @@ export default {
         `Tray ${isOpening ? "geopend" : "gesloten"}.`,
         () => axios.post("/api/arduino/leonardo/tray", { command })
       );
+    },
+    trayStopDisabled() {
+      return (
+        Boolean(this.manualControlBusy) &&
+        !["tray:out", "tray:in", "tray:stop"].includes(this.manualControlBusy)
+      );
+    },
+    async stopTray() {
+      if (this.trayStopDisabled()) {
+        return;
+      }
+
+      this.manualControlBusy = "tray:stop";
+      this.manualControlError = "";
+      this.manualControlSuccess = "";
+
+      try {
+        await axios.post("/api/arduino/leonardo/tray", { command: "TRAY_STOP" });
+        this.manualControlSuccess = "Tray gestopt.";
+      } catch (error) {
+        this.manualControlError =
+          this.stringifyErrorDetail(error?.response?.data?.detail) ||
+          "Tray stoppen mislukt.";
+      } finally {
+        if (this.manualControlBusy === "tray:stop") {
+          this.manualControlBusy = "";
+        }
+      }
     },
     async stepWrist(wristIndex, delta) {
       const label = delta > 0 ? `Wrist ${wristIndex} +${delta}° gestuurd.` : `Wrist ${wristIndex} ${delta}° gestuurd.`;
