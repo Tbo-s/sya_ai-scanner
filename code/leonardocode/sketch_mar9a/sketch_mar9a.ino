@@ -26,14 +26,6 @@ const int wrist1ServoPin      = 11;
 const int wrist2ServoPin      = 12;
 
 // =========================
-// Switches (NC -> INPUT_PULLUP)
-// C -> GND, NC -> pin
-// geraakt = HIGH
-//
-// I2C gebruikt pin 2/3 op Leonardo
-// Gate blijft op 4/5
-// Tray verhuist naar A2/A3
-// =========================
 const int gateOpenSwitch  = A2;
 const int gateCloseSwitch = A3;
 const int trayOutSwitch   = 4;

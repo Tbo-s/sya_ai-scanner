@@ -854,6 +854,10 @@ export default {
       }
     },
     async fetchManualStatus() {
+      if (this.manualStatusBusy) {
+        return;
+      }
+
       this.manualStatusBusy = true;
       try {
         const response = await axios.get("/api/arduino/leonardo/status");
@@ -871,7 +875,9 @@ export default {
         };
       } catch (error) {
         if (this.step === 0) {
-          this.manualControlError = error?.response?.data?.detail || "Kon Leonardo status niet ophalen.";
+          this.manualControlError =
+            this.stringifyErrorDetail(error?.response?.data?.detail) ||
+            "Kon Leonardo status niet ophalen.";
         }
       } finally {
         this.manualStatusBusy = false;
@@ -898,7 +904,9 @@ export default {
           onSuccess(response?.data || {});
         }
       } catch (error) {
-        this.manualControlError = error?.response?.data?.detail || "Manuele beweging mislukt.";
+        this.manualControlError =
+          this.stringifyErrorDetail(error?.response?.data?.detail) ||
+          "Manuele beweging mislukt.";
       } finally {
         this.manualControlBusy = "";
       }

@@ -1,7 +1,9 @@
+from services import machine_service
 from services.machine_service import (
     _derive_tray_position_from_status,
     _extract_gate_position,
     _extract_status_line,
+    _get_status_values,
     _parse_status_values,
 )
 
@@ -41,6 +43,31 @@ def test_parse_status_values_keeps_distance_mm():
     assert status == status_line
     assert values["distanceMm"] == "123"
     assert values["trayInSw"] == "1"
+
+
+def test_get_status_values_retries_until_parseable(monkeypatch):
+    responses = [
+        ["Leonardo ready", "DISTANCE_SENSOR_READY"],
+        [
+            "gateState=0, gatePos=DOWN, trayState=0, trayPos=IN, "
+            "wrist1=90, wrist2=90, vac1=0, vac2=0, valve1=0, valve2=0, "
+            "distanceMm=123, gateOpenSw=0, gateCloseSw=1, trayOutSw=0, trayInSw=1"
+        ],
+    ]
+
+    def fake_send_with_response(command):
+        assert command == "STATUS"
+        return responses.pop(0)
+
+    monkeypatch.setenv("APP_LEONARDO_STATUS_RETRIES", "2")
+    monkeypatch.setenv("APP_LEONARDO_STATUS_RETRY_DELAY_S", "0")
+    monkeypatch.setattr(machine_service, "_send_with_response", fake_send_with_response)
+
+    values, lines = _get_status_values()
+
+    assert values["distanceMm"] == "123"
+    assert values["trayInSw"] == "1"
+    assert lines[0] == "Leonardo ready"
 
 
 def test_derive_tray_position_out():
