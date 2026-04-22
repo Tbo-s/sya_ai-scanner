@@ -86,7 +86,9 @@
         <div class="arm-status-header">
           <div>
             <div class="control-title">Arm coordinaten</div>
-            <div class="secondary-text">0,0 is bij de X/Y-limits.</div>
+            <div class="secondary-text">
+              0,0 is bij de X/Y-limits. Max: X {{ formattedArmSoftLimit("x") }} / Y {{ formattedArmSoftLimit("y") }}.
+            </div>
           </div>
           <v-btn
             icon="mdi-refresh"
@@ -587,6 +589,10 @@ export default {
         x: -1,
         y: -1,
       },
+      armSoftLimits: {
+        x: 4,
+        y: 4,
+      },
       manualStatus: {
         wrist1: null,
         wrist2: null,
@@ -651,6 +657,10 @@ export default {
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
         this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 1);
         this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 120);
+        this.armSoftLimits = {
+          x: Number(response.data?.grbl_xy_max?.x || 4),
+          y: Number(response.data?.grbl_xy_max?.y || 4),
+        };
         this.armLimitTowardZeroSign = {
           x: Number(response.data?.grbl_limit_toward_zero_sign?.x || -1),
           y: Number(response.data?.grbl_limit_toward_zero_sign?.y || -1),
@@ -659,6 +669,7 @@ export default {
         this.autoGrblTestSpinOnUiStart = false;
         this.manualXyStep = 1;
         this.manualXyFeedRate = 120;
+        this.armSoftLimits = { x: 4, y: 4 };
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
@@ -731,6 +742,10 @@ export default {
       const value = this.armCoordinates[axis];
       return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "--";
     },
+    formattedArmSoftLimit(axis) {
+      const value = this.armSoftLimits[axis];
+      return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "--";
+    },
     deltaMovesTowardLimit(axis, delta) {
       if (!delta) {
         return false;
@@ -741,6 +756,14 @@ export default {
     xyLimitBlocks(deltaX, deltaY) {
       if (!this.armHomed) {
         return false;
+      }
+      const targetX = Number(this.armCoordinates.x) + deltaX;
+      const targetY = Number(this.armCoordinates.y) + deltaY;
+      if (Number.isFinite(targetX) && (targetX < 0 || targetX > this.armSoftLimits.x)) {
+        return true;
+      }
+      if (Number.isFinite(targetY) && (targetY < 0 || targetY > this.armSoftLimits.y)) {
+        return true;
       }
       return (
         (this.armLimits.x && this.deltaMovesTowardLimit("x", deltaX)) ||
@@ -778,6 +801,12 @@ export default {
         this.armLimitTowardZeroSign = {
           x: Number(status.limit_toward_zero_sign.x || -1),
           y: Number(status.limit_toward_zero_sign.y || -1),
+        };
+      }
+      if (status?.soft_limits) {
+        this.armSoftLimits = {
+          x: Number(status.soft_limits.x || 4),
+          y: Number(status.soft_limits.y || 4),
         };
       }
     },
@@ -879,6 +908,10 @@ export default {
           if (data?.stopped_by_limit) {
             const axes = (data.limit_axes || []).join(", ").toUpperCase();
             this.manualControlSuccess = `Limit geraakt${axes ? ` (${axes})` : ""}; beweging gestopt.`;
+          } else if (data?.bounded_by_soft_limit) {
+            this.manualControlSuccess = data?.skipped
+              ? "Softwaregrens bereikt; arm niet verder bewogen."
+              : "Beweging ingekort tot softwaregrens.";
           }
           this.fetchArmStatus();
         }

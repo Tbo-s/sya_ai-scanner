@@ -82,6 +82,10 @@ def _get_manual_xy_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120"))
 
 
+def _get_xy_max(axis: str) -> float:
+    return max(0.0, float(os.getenv(f"APP_GRBL_MAX_{axis.upper()}", "4.0")))
+
+
 def _get_home_xy_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120"))
 
@@ -332,17 +336,87 @@ def _set_arm_homed_zero() -> None:
         _ARM_XY_POSITION["y"] = 0.0
 
 
+def _get_tracked_xy_position() -> dict[str, Any]:
+    with _ARM_POSITION_LOCK:
+        return {
+            "homed": _ARM_HOMED,
+            "x": _ARM_XY_POSITION["x"],
+            "y": _ARM_XY_POSITION["y"],
+        }
+
+
+def _xy_soft_limits() -> dict[str, float]:
+    return {
+        "x": _get_xy_max("X"),
+        "y": _get_xy_max("Y"),
+    }
+
+
+def _clamp_xy_delta_to_soft_limits(delta_x: float, delta_y: float) -> dict[str, Any]:
+    tracked = _get_tracked_xy_position()
+    limits = _xy_soft_limits()
+    adjusted = {"x": float(delta_x), "y": float(delta_y)}
+
+    if not tracked["homed"]:
+        return {
+            "delta_x": adjusted["x"],
+            "delta_y": adjusted["y"],
+            "bounded": False,
+            "skipped": False,
+            "soft_limits": limits,
+            "target": {"x": tracked["x"], "y": tracked["y"]},
+        }
+
+    target: dict[str, Optional[float]] = {"x": tracked["x"], "y": tracked["y"]}
+    bounded = False
+
+    for axis, delta in (("x", delta_x), ("y", delta_y)):
+        current = tracked[axis]
+        if current is None:
+            continue
+
+        requested_target = current + float(delta)
+        clamped_target = min(max(0.0, requested_target), limits[axis])
+        adjusted[axis] = clamped_target - current
+        target[axis] = clamped_target
+        if abs(adjusted[axis] - float(delta)) > 1e-9:
+            bounded = True
+
+    return {
+        "delta_x": adjusted["x"],
+        "delta_y": adjusted["y"],
+        "bounded": bounded,
+        "skipped": abs(adjusted["x"]) <= 1e-9 and abs(adjusted["y"]) <= 1e-9,
+        "soft_limits": limits,
+        "target": target,
+    }
+
+
+def _clamp_xy_target_to_soft_limits(x: float, y: float) -> dict[str, Any]:
+    limits = _xy_soft_limits()
+    target_x = min(max(0.0, float(x)), limits["x"])
+    target_y = min(max(0.0, float(y)), limits["y"])
+
+    return {
+        "x": target_x,
+        "y": target_y,
+        "bounded": abs(target_x - float(x)) > 1e-9 or abs(target_y - float(y)) > 1e-9,
+        "requested": {"x": float(x), "y": float(y)},
+        "soft_limits": limits,
+    }
+
+
 def _apply_xy_delta_to_tracked_position(delta_x: float, delta_y: float, limit_axes: set[str]) -> None:
     with _ARM_POSITION_LOCK:
         if "x" in limit_axes:
             _ARM_XY_POSITION["x"] = 0.0
         elif abs(delta_x) > 1e-9 and _ARM_XY_POSITION["x"] is not None:
-            _ARM_XY_POSITION["x"] = max(0.0, _ARM_XY_POSITION["x"] + delta_x)
+            _ARM_XY_POSITION["x"] = min(_get_xy_max("X"), max(0.0, _ARM_XY_POSITION["x"] + delta_x))
 
         if "y" in limit_axes:
             _ARM_XY_POSITION["y"] = 0.0
         elif abs(delta_y) > 1e-9 and _ARM_XY_POSITION["y"] is not None:
-            _ARM_XY_POSITION["y"] = max(0.0, _ARM_XY_POSITION["y"] + delta_y)
+            _ARM_XY_POSITION["y"] = min(_get_xy_max("Y"), max(0.0, _ARM_XY_POSITION["y"] + delta_y))
 
 
 def _delta_moves_toward_zero(axis: str, delta: float) -> bool:
@@ -733,6 +807,7 @@ def get_grbl_arm_status() -> dict[str, Any]:
             status["position"] = _status_position(status)
             with _ARM_POSITION_LOCK:
                 status["homed"] = _ARM_HOMED
+            status["soft_limits"] = _xy_soft_limits()
             status["limit_toward_zero_sign"] = {
                 "x": _get_limit_toward_zero_sign("X"),
                 "y": _get_limit_toward_zero_sign("Y"),
@@ -857,15 +932,31 @@ def _feed_rate() -> int:
 def move_to_front_of_phone() -> dict[str, Any]:
     x = float(os.getenv("APP_GRBL_FRONT_X", "50.0"))
     y = float(os.getenv("APP_GRBL_FRONT_Y", "100.0"))
+    target = _clamp_xy_target_to_soft_limits(x, y)
     feed_rate = _feed_rate()
-    return {"action": "move_to_front", "results": [send_grbl("G90"), send_grbl(f"G1 X{x} Y{y} F{feed_rate}")]}
+    return {
+        "action": "move_to_front",
+        "bounded_by_soft_limit": target["bounded"],
+        "requested_target": target["requested"],
+        "target": {"x": target["x"], "y": target["y"]},
+        "soft_limits": target["soft_limits"],
+        "results": [send_grbl("G90"), send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}")],
+    }
 
 
 def move_to_back_of_phone() -> dict[str, Any]:
     x = float(os.getenv("APP_GRBL_BACK_X", "50.0"))
     y = float(os.getenv("APP_GRBL_BACK_Y", "20.0"))
+    target = _clamp_xy_target_to_soft_limits(x, y)
     feed_rate = _feed_rate()
-    return {"action": "move_to_back", "results": [send_grbl("G90"), send_grbl(f"G1 X{x} Y{y} F{feed_rate}")]}
+    return {
+        "action": "move_to_back",
+        "bounded_by_soft_limit": target["bounded"],
+        "requested_target": target["requested"],
+        "target": {"x": target["x"], "y": target["y"]},
+        "soft_limits": target["soft_limits"],
+        "results": [send_grbl("G90"), send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}")],
+    }
 
 
 def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
@@ -912,13 +1003,32 @@ def _format_xy_jog_command(delta_x: float, delta_y: float, feed_rate: int) -> st
 
 def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
     feed_rate = _get_manual_xy_feed_rate()
-    limit_stop_axes = _limit_stop_axes_for_xy_delta(delta_x, delta_y)
-    moving_axes = _moving_axes_for_xy_delta(delta_x, delta_y)
+    bounded_delta = _clamp_xy_delta_to_soft_limits(delta_x, delta_y)
+    adjusted_delta_x = bounded_delta["delta_x"]
+    adjusted_delta_y = bounded_delta["delta_y"]
+
+    if bounded_delta["skipped"]:
+        return {
+            "action": action,
+            "feed_rate": feed_rate,
+            "requested_delta": {"x": delta_x, "y": delta_y},
+            "applied_delta": {"x": 0.0, "y": 0.0},
+            "bounded_by_soft_limit": bounded_delta["bounded"],
+            "skipped": True,
+            "stopped_by_limit": False,
+            "limit_axes": [],
+            "soft_limits": bounded_delta["soft_limits"],
+            "position": _status_position(None),
+            "results": [],
+        }
+
+    limit_stop_axes = _limit_stop_axes_for_xy_delta(adjusted_delta_x, adjusted_delta_y)
+    moving_axes = _moving_axes_for_xy_delta(adjusted_delta_x, adjusted_delta_y)
     results = _run_grbl_commands(
         [
             ("G21", True),
             ("G91", True),
-            (_format_xy_jog_command(delta_x, delta_y, feed_rate), True),
+            (_format_xy_jog_command(adjusted_delta_x, adjusted_delta_y, feed_rate), True),
         ],
         wait_for_idle=True,
         precheck_limit_axes=limit_stop_axes,
@@ -930,16 +1040,21 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
     stopped_by_limit = bool(limit_axes)
 
     _apply_xy_delta_to_tracked_position(
-        0.0 if stopped_by_limit else delta_x,
-        0.0 if stopped_by_limit else delta_y,
+        0.0 if stopped_by_limit else adjusted_delta_x,
+        0.0 if stopped_by_limit else adjusted_delta_y,
         limit_axes,
     )
 
     return {
         "action": action,
         "feed_rate": feed_rate,
+        "requested_delta": {"x": delta_x, "y": delta_y},
+        "applied_delta": {"x": adjusted_delta_x, "y": adjusted_delta_y},
+        "bounded_by_soft_limit": bounded_delta["bounded"],
+        "skipped": False,
         "stopped_by_limit": stopped_by_limit,
         "limit_axes": sorted(limit_axes),
+        "soft_limits": bounded_delta["soft_limits"],
         "position": _status_position(None),
         "results": results,
     }
@@ -994,16 +1109,25 @@ def _get_distance_threshold() -> int:
 
 
 def _move_with_distance_stop(x: float, y: float, action: str) -> dict[str, Any]:
+    target = _clamp_xy_target_to_soft_limits(x, y)
     slow_feed = max(200, _feed_rate() // 6)
     threshold = _get_distance_threshold()
     send_grbl("G90", wait_for_ok=True)
-    send_grbl(f"G1 X{x} Y{y} F{slow_feed}", wait_for_ok=False)
+    send_grbl(f"G1 X{target['x']} Y{target['y']} F{slow_feed}", wait_for_ok=False)
     for _ in range(200):
         result = _machine_svc.read_distance()
         distance = result.get("distance_cm", -1)
         if 0 < distance <= threshold:
             feed_hold()
-            return {"action": action, "stopped": True, "distance_cm": distance}
+            return {
+                "action": action,
+                "stopped": True,
+                "distance_cm": distance,
+                "bounded_by_soft_limit": target["bounded"],
+                "requested_target": target["requested"],
+                "target": {"x": target["x"], "y": target["y"]},
+                "soft_limits": target["soft_limits"],
+            }
         time.sleep(0.1)
     feed_hold()
     raise HTTPException(status_code=504, detail=f"{action} timed out waiting for distance threshold.")

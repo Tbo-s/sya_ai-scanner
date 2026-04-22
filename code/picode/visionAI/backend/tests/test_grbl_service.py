@@ -204,6 +204,51 @@ def test_manual_xy_move_rejects_zero_delta():
     assert exc_info.value.status_code == 400
 
 
+def test_manual_xy_move_clamps_to_soft_limit_after_homing(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0, **kwargs):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")
+    monkeypatch.setenv("APP_GRBL_MAX_X", "4.0")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    grbl_service._set_arm_homed_zero()
+    with grbl_service._ARM_POSITION_LOCK:
+        grbl_service._ARM_XY_POSITION["x"] = 3.5
+
+    result = grbl_service.manual_xy_move(1.0, 0.0)
+
+    assert result["bounded_by_soft_limit"] is True
+    assert result["applied_delta"] == {"x": 0.5, "y": 0.0}
+    assert result["position"]["x"] == 4.0
+    assert commands == [("G21", True), ("G91", True), ("G1 X0.5 F120", True)]
+
+
+def test_manual_xy_move_skips_when_soft_limit_already_reached(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0, **kwargs):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_MAX_X", "4.0")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    grbl_service._set_arm_homed_zero()
+    with grbl_service._ARM_POSITION_LOCK:
+        grbl_service._ARM_XY_POSITION["x"] = 4.0
+
+    result = grbl_service.manual_xy_move(1.0, 0.0)
+
+    assert result["bounded_by_soft_limit"] is True
+    assert result["skipped"] is True
+    assert result["results"] == []
+    assert commands == []
+
+
 def test_wait_for_grbl_idle_polls_until_idle(monkeypatch):
     class FakeSerial:
         def __init__(self):
