@@ -598,7 +598,7 @@ export default {
       },
       armSoftLimits: {
         x: 4,
-        y: 5,
+        y: 5.5,
       },
       manualStatus: {
         wrist1: null,
@@ -668,7 +668,7 @@ export default {
         this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 120);
         this.armSoftLimits = {
           x: Number(response.data?.grbl_xy_max?.x || 4),
-          y: Number(response.data?.grbl_xy_max?.y || 5),
+          y: Number(response.data?.grbl_xy_max?.y || 5.5),
         };
         this.armLimitTowardZeroSign = {
           x: Number(response.data?.grbl_limit_toward_zero_sign?.x || -1),
@@ -678,7 +678,7 @@ export default {
         this.autoGrblTestSpinOnUiStart = false;
         this.manualXyStep = 0.5;
         this.manualXyFeedRate = 120;
-        this.armSoftLimits = { x: 4, y: 5 };
+        this.armSoftLimits = { x: 4, y: 5.5 };
       }
 
       if (this.autoGrblTestSpinOnUiStart) {
@@ -834,7 +834,7 @@ export default {
       if (status?.soft_limits) {
         this.armSoftLimits = {
           x: Number(status.soft_limits.x || 4),
-          y: Number(status.soft_limits.y || 5),
+          y: Number(status.soft_limits.y || 5.5),
         };
       }
     },

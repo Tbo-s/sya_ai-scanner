@@ -24,7 +24,7 @@ def get_runtime_settings() -> dict[str, Any]:
         "grbl_manual_xy_feed_rate": int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")),
         "grbl_xy_max": {
             "x": float(os.getenv("APP_GRBL_MAX_X", "4.0")),
-            "y": float(os.getenv("APP_GRBL_MAX_Y", "5.0")),
+            "y": float(os.getenv("APP_GRBL_MAX_Y", "5.5")),
         },
         "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120")),
         "grbl_limit_pin_mode": os.getenv("APP_GRBL_LIMIT_PIN_MODE", "active_present").strip(),

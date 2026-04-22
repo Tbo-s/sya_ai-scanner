@@ -84,7 +84,7 @@ def _get_manual_xy_feed_rate() -> int:
 
 def _get_xy_max(axis: str) -> float:
     normalized_axis = axis.upper()
-    default_max = "5.0" if normalized_axis == "Y" else "4.0"
+    default_max = "5.5" if normalized_axis == "Y" else "4.0"
     return max(0.0, float(os.getenv(f"APP_GRBL_MAX_{normalized_axis}", default_max)))
 
 
