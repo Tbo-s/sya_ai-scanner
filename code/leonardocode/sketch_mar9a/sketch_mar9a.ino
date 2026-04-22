@@ -345,21 +345,21 @@ void handleSerial() {
 // Distance sensor
 // =========================
 void initDistanceSensor() {
-  if (distanceSensor.init()) {
-    distanceSensorOk = true;
+  void initDistanceSensor() {
+    if (distanceSensor.init() == false) {
+      distanceSensorOk = true;
 
-    // optioneel maar handig
-    distanceSensor.setDistanceModeShort();      // korte afstand = vaak beter voor jouw toepassing
-    distanceSensor.setTimingBudgetInMs(50);     // mag ook 20/33/50/100 zijn
-    distanceSensor.setIntermeasurementPeriod(50);
+      distanceSensor.setDistanceModeShort();
+      distanceSensor.setTimingBudgetInMs(50);
+      distanceSensor.setIntermeasurementPeriod(50);
 
-    distanceSensor.startRanging();
-    Serial.println("DISTANCE_SENSOR_READY");
-  } else {
-    distanceSensorOk = false;
-    Serial.println("DISTANCE_SENSOR_INIT_FAILED");
+      distanceSensor.startRanging();
+      Serial.println("DISTANCE_SENSOR_READY");
+    } else {
+      distanceSensorOk = false;
+      Serial.println("DISTANCE_SENSOR_INIT_FAILED");
+    }
   }
-}
 
 void updateDistanceMeasurement() {
   if (!distanceSensorOk) return;
