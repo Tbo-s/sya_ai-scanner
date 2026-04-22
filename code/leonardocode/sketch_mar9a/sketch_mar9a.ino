@@ -344,7 +344,6 @@ void handleSerial() {
 // =========================
 // Distance sensor
 // =========================
-void initDistanceSensor() {
   void initDistanceSensor() {
     if (distanceSensor.init() == false) {
       distanceSensorOk = true;

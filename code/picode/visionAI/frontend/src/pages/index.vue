@@ -573,7 +573,7 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
-      manualXyStep: 1,
+      manualXyStep: 0.5,
       manualXyFeedRate: 120,
       manualControlBusy: "",
       manualControlError: "",
@@ -664,7 +664,7 @@ export default {
       try {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
-        this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 1);
+        this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 0.5);
         this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 120);
         this.armSoftLimits = {
           x: Number(response.data?.grbl_xy_max?.x || 4),
@@ -676,7 +676,7 @@ export default {
         };
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
-        this.manualXyStep = 1;
+        this.manualXyStep = 0.5;
         this.manualXyFeedRate = 120;
         this.armSoftLimits = { x: 4, y: 5 };
       }

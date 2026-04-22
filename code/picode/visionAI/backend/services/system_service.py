@@ -20,7 +20,7 @@ def get_runtime_settings() -> dict[str, Any]:
         "auto_grbl_boot_sequence": _is_enabled("APP_GRBL_BOOT_SEQUENCE_ENABLED", "0"),
         "auto_grbl_test_spin_on_ui_start": _is_enabled("APP_GRBL_TEST_SPIN_ON_UI_START", "1"),
         "grbl_boot_sequence": os.getenv("APP_GRBL_BOOT_SEQUENCE", "$X|$H"),
-        "grbl_manual_xy_step": float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "1.0")),
+        "grbl_manual_xy_step": float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "0.5")),
         "grbl_manual_xy_feed_rate": int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120")),
         "grbl_xy_max": {
             "x": float(os.getenv("APP_GRBL_MAX_X", "4.0")),

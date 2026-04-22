@@ -75,7 +75,7 @@ def _get_manual_z_feed_rate() -> int:
 
 
 def _get_manual_xy_step() -> float:
-    return float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "1.0"))
+    return float(os.getenv("APP_GRBL_MANUAL_XY_STEP", "0.5"))
 
 
 def _get_manual_xy_feed_rate() -> int:
