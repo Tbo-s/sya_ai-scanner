@@ -37,6 +37,10 @@ def _get_leonardo_command_open_delay_s() -> float:
     return max(0.0, float(os.getenv("APP_LEONARDO_COMMAND_OPEN_DELAY_S", "0.8")))
 
 
+def _get_leonardo_post_write_hold_s() -> float:
+    return max(0.0, float(os.getenv("APP_LEONARDO_POST_WRITE_HOLD_S", "0.25")))
+
+
 def _use_persistent_leonardo_serial() -> bool:
     return os.getenv("APP_LEONARDO_PERSISTENT_SERIAL", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -130,6 +134,9 @@ def _send_line(line: str):
                 ser = _get_leonardo_serial()
                 ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
                 ser.flush()
+                hold_s = _get_leonardo_post_write_hold_s()
+                if hold_s > 0:
+                    time.sleep(hold_s)
                 return
 
             with serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5) as ser:
@@ -140,6 +147,9 @@ def _send_line(line: str):
                     ser.reset_input_buffer()
                 ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
                 ser.flush()
+                hold_s = _get_leonardo_post_write_hold_s()
+                if hold_s > 0:
+                    time.sleep(hold_s)
     except Exception as exc:
         _close_leonardo_serial()
         raise HTTPException(
