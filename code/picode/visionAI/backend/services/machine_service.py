@@ -14,6 +14,7 @@ _LEONARDO_SERIAL_LOCK = threading.RLock()
 _LEONARDO_SERIAL: Optional[serial.Serial] = None
 _LEONARDO_SERIAL_PORT = ""
 _LEONARDO_SERIAL_BAUD = 0
+_WRIST_ANGLE_CACHE = {1: 90, 2: 90}
 
 
 def _get_leonardo_port() -> str:
@@ -25,7 +26,7 @@ def _get_leonardo_baud() -> int:
 
 
 def _get_leonardo_read_timeout_s() -> float:
-    return max(0.1, float(os.getenv("APP_LEONARDO_READ_TIMEOUT_S", "2.5")))
+    return max(0.1, float(os.getenv("APP_LEONARDO_READ_TIMEOUT_S", "0.8")))
 
 
 def _get_leonardo_open_delay_s() -> float:
@@ -38,6 +39,10 @@ def _get_leonardo_status_retries() -> int:
 
 def _get_leonardo_status_retry_delay_s() -> float:
     return max(0.0, float(os.getenv("APP_LEONARDO_STATUS_RETRY_DELAY_S", "0.25")))
+
+
+def _get_leonardo_poll_status_timeout_s() -> float:
+    return max(0.05, float(os.getenv("APP_LEONARDO_POLL_STATUS_TIMEOUT_S", "0.1")))
 
 
 def _get_wrist_dwell_ms() -> int:
@@ -91,12 +96,27 @@ def _get_leonardo_serial() -> serial.Serial:
     return _LEONARDO_SERIAL
 
 
+def warm_up() -> dict:
+    port = _get_leonardo_port()
+    try:
+        with _LEONARDO_SERIAL_LOCK:
+            _get_leonardo_serial()
+        return {"ok": True, "port": port}
+    except Exception as exc:
+        _close_leonardo_serial()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to warm Leonardo serial device on {port}: {exc}",
+        ) from exc
+
+
 def _send_line(line: str):
     port = _get_leonardo_port()
     try:
         with _LEONARDO_SERIAL_LOCK:
             ser = _get_leonardo_serial()
             ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
+            ser.flush()
     except Exception as exc:
         _close_leonardo_serial()
         raise HTTPException(
@@ -118,6 +138,7 @@ def _send_with_response(
             if hasattr(ser, "reset_input_buffer"):
                 ser.reset_input_buffer()
             ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+            ser.flush()
             started_at = time.time()
             lines: list[str] = []
             while time.time() - started_at < read_timeout_s:
@@ -184,6 +205,14 @@ def _normalize_status_values(values: dict[str, str]) -> dict[str, str]:
             normalized[physical_key] = normalized[legacy_key]
 
     return normalized
+
+
+def _update_cached_state(values: dict[str, str]):
+    for wrist_index in (1, 2):
+        try:
+            _WRIST_ANGLE_CACHE[wrist_index] = int(values.get(f"wrist{wrist_index}", _WRIST_ANGLE_CACHE[wrist_index]))
+        except (TypeError, ValueError):
+            pass
 
 
 def _format_status_attempts_for_error(attempts: list[dict]) -> str:
@@ -260,6 +289,7 @@ def _send_command_until_token(
 ) -> list[str]:
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
     ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+    ser.flush()
     started_at = time.time()
     lines: list[str] = []
     while time.time() - started_at < read_timeout_s:
@@ -275,15 +305,21 @@ def _send_command_until_token(
     return lines
 
 
-def _get_status_values() -> tuple[dict[str, str], list[str]]:
+def _get_status_values(
+    *,
+    timeout_s: Optional[float] = None,
+    retries: Optional[int] = None,
+    raise_on_missing: bool = True,
+) -> tuple[dict[str, str], list[str]]:
     with _LEONARDO_SERIAL_LOCK:
         attempts: list[dict] = []
         all_lines: list[str] = []
-        retries = _get_leonardo_status_retries()
+        max_retries = retries if retries is not None else _get_leonardo_status_retries()
 
-        for attempt in range(1, retries + 1):
+        for attempt in range(1, max_retries + 1):
             lines = _send_with_response(
                 "STATUS",
+                timeout_s=timeout_s,
                 stop_when=lambda line: _line_matches_pattern(STATUS_LINE_PATTERN, line),
             )
             attempts.append({"attempt": attempt, "response": lines})
@@ -291,17 +327,22 @@ def _get_status_values() -> tuple[dict[str, str], list[str]]:
 
             status_line = _extract_status_line(lines)
             if status_line:
-                return _normalize_status_values(_parse_status_values(status_line)), all_lines
+                values = _normalize_status_values(_parse_status_values(status_line))
+                _update_cached_state(values)
+                return values, all_lines
 
-            if attempt < retries:
+            if attempt < max_retries:
                 delay_s = _get_leonardo_status_retry_delay_s()
                 if delay_s > 0:
                     time.sleep(delay_s)
 
+    if not raise_on_missing:
+        return {}, all_lines
+
     raise HTTPException(
         status_code=504,
         detail=(
-            f"STATUS did not return a parseable status line after {retries} attempt(s). "
+            f"STATUS did not return a parseable status line after {max_retries} attempt(s). "
             "Expected a line like 'gateState=..., trayInSw=0/1'. "
             f"Responses: {_format_status_attempts_for_error(attempts)}"
         ),
@@ -396,10 +437,14 @@ def get_tray_position() -> dict:
 
 
 def get_status() -> dict:
-    values, lines = _get_status_values()
+    values, lines = _get_status_values(
+        timeout_s=_get_leonardo_poll_status_timeout_s(),
+        retries=1,
+        raise_on_missing=False,
+    )
     return {
         "command": "STATUS",
-        "found": True,
+        "found": bool(values),
         "status": values,
         "response": lines,
     }
@@ -443,15 +488,16 @@ def _set_binary_output(
 ) -> dict:
     command = command_on if enabled else command_off
     expected = done_on if enabled else done_off
-    lines = _send_with_response(
-        command,
-        timeout_s=0.6,
-        stop_when=lambda line: expected in line,
-    )
-    done = _contains_token(lines, expected)
-    if raise_on_no_ack:
-        return _require_done(command, done, lines) | {"enabled": enabled}
-    return {"command": command, "sent": True, "ack": done, "enabled": enabled, "response": lines}
+    _send_line(command)
+    return {
+        "command": command,
+        "sent": True,
+        "ack": False,
+        "ack_skipped": True,
+        "expected": expected,
+        "enabled": enabled,
+        "response": [],
+    }
 
 
 def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
@@ -524,12 +570,34 @@ def set_vacuum2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
 
 def set_wrist1(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
-    return _move_wrist_smooth(1, angle, _get_wrist_current_angle("wrist1"))
+    result = _move_wrist_smooth(1, angle, _get_wrist_current_angle("wrist1"))
+    _WRIST_ANGLE_CACHE[1] = angle
+    return result
 
 
 def set_wrist2(angle: int) -> dict:
     angle = max(0, min(180, int(angle)))
-    return _move_wrist_smooth(2, angle, _get_wrist_current_angle("wrist2"))
+    result = _move_wrist_smooth(2, angle, _get_wrist_current_angle("wrist2"))
+    _WRIST_ANGLE_CACHE[2] = angle
+    return result
+
+
+def _move_wrist_fast(wrist_index: int, target_angle: int, current_angle: int) -> dict:
+    target_angle = max(0, min(180, int(target_angle)))
+    command = f"WRIST{wrist_index}_ANGLE:{target_angle}"
+    expected = f"WRIST{wrist_index}_DONE:{target_angle}"
+    lines = _send_with_response(
+        command,
+        timeout_s=0.6,
+        stop_when=lambda line: expected in line,
+    )
+    done = any(expected in line for line in lines)
+    _WRIST_ANGLE_CACHE[wrist_index] = target_angle
+    return _require_done(command, done, lines) | {
+        "angle": target_angle,
+        "previous_angle": current_angle,
+        "smoothed": False,
+    }
 
 
 def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optional[int]) -> dict:
@@ -613,17 +681,15 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
 
 
 def adjust_wrist1(delta: int) -> dict:
-    values, _ = _get_status_values()
-    current_angle = _get_status_int(values, "wrist1", 90)
+    current_angle = _WRIST_ANGLE_CACHE[1]
     target_angle = max(0, min(180, current_angle + int(delta)))
-    return _move_wrist_smooth(1, target_angle, current_angle) | {"previous_angle": current_angle, "delta": int(delta)}
+    return _move_wrist_fast(1, target_angle, current_angle) | {"delta": int(delta)}
 
 
 def adjust_wrist2(delta: int) -> dict:
-    values, _ = _get_status_values()
-    current_angle = _get_status_int(values, "wrist2", 90)
+    current_angle = _WRIST_ANGLE_CACHE[2]
     target_angle = max(0, min(180, current_angle + int(delta)))
-    return _move_wrist_smooth(2, target_angle, current_angle) | {"previous_angle": current_angle, "delta": int(delta)}
+    return _move_wrist_fast(2, target_angle, current_angle) | {"delta": int(delta)}
 
 
 def wrist_home() -> dict:

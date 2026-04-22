@@ -871,6 +871,9 @@ export default {
       this.manualStatusBusy = true;
       try {
         const response = await axios.get("/api/arduino/leonardo/status");
+        if (!response.data?.found) {
+          return;
+        }
         const status = response.data?.status || {};
         this.manualStatus = {
           wrist1: this.parseManualStatusInt(status.wrist1),

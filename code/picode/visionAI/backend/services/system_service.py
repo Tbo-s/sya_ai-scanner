@@ -69,14 +69,21 @@ def home_axes() -> dict[str, Any]:
 
 
 def boot_initialize() -> dict[str, Any]:
-    from services import grbl_service
+    from services import grbl_service, machine_service
 
     report = {
+        "leonardo_warmup": None,
         "safe_idle": None,
         "grbl_home_xy": None,
         "grbl_boot": None,
         "errors": [],
     }
+
+    if _is_enabled("APP_LEONARDO_WARM_ON_BOOT", "1"):
+        try:
+            report["leonardo_warmup"] = machine_service.warm_up()
+        except Exception as exc:
+            report["errors"].append({"step": "leonardo_warmup", "error": str(exc)})
 
     if _is_enabled("APP_MACHINE_SAFE_IDLE_ON_BOOT", "1"):
         try:
