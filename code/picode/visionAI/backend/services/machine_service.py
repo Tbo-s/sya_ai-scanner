@@ -525,14 +525,31 @@ def wrist_home() -> dict:
 
 
 def read_distance() -> dict:
-    lines = _send_with_response("DIST_READ")
+    lines = _send_with_response("DISTANCE_MM")
     for line in lines:
-        if line.startswith("DIST="):
+        if line.startswith("DISTANCE_MM="):
             try:
-                return {"distance_cm": int(line.split("=", 1)[1].strip()), "found": True, "response": lines}
+                distance_mm = int(line.split("=", 1)[1].strip())
+                return {
+                    "distance_mm": distance_mm,
+                    "distance_cm": distance_mm / 10.0,
+                    "found": True,
+                    "response": lines,
+                }
             except ValueError:
                 pass
-    return {"distance_cm": -1, "found": False, "response": lines}
+        if line.startswith("DIST="):
+            try:
+                distance_cm = int(line.split("=", 1)[1].strip())
+                return {
+                    "distance_mm": distance_cm * 10,
+                    "distance_cm": distance_cm,
+                    "found": True,
+                    "response": lines,
+                }
+            except ValueError:
+                pass
+    return {"distance_mm": -1, "distance_cm": -1, "found": False, "response": lines}
 
 
 def tray_to_gate_position() -> dict:

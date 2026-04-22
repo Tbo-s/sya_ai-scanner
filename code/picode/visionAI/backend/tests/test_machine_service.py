@@ -28,6 +28,21 @@ def test_parse_status_values():
     assert values["trayOutSw"] == "1"
 
 
+def test_parse_status_values_keeps_distance_mm():
+    status_line = (
+        "gateState=0, gatePos=DOWN, trayState=0, trayPos=IN, wrist1=90, wrist2=90, "
+        "vac1=0, vac2=0, valve1=0, valve2=0, distanceMm=123, "
+        "gateOpenSw=0, gateCloseSw=1, trayOutSw=0, trayInSw=1"
+    )
+
+    status = _extract_status_line([status_line])
+    values = _parse_status_values(status or "")
+
+    assert status == status_line
+    assert values["distanceMm"] == "123"
+    assert values["trayInSw"] == "1"
+
+
 def test_derive_tray_position_out():
     position = _derive_tray_position_from_status({"trayOutSw": "1", "trayInSw": "0"})
     assert position == "OUT"

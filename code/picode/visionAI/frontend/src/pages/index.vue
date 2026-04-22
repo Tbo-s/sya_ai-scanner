@@ -128,6 +128,12 @@
         <div v-if="armStatusError" class="error-text">{{ armStatusError }}</div>
       </div>
 
+      <div class="sensor-status-card">
+        <div class="control-title">Distance sensor</div>
+        <div class="sensor-distance-value">{{ formattedDistanceMm() }} mm</div>
+        <div class="secondary-text">VL53L1X meting vanaf de module.</div>
+      </div>
+
       <div class="control-grid">
         <div class="control-group">
           <div class="control-title">XY-axis</div>
@@ -573,6 +579,7 @@ export default {
       manualControlError: "",
       manualControlSuccess: "",
       manualStatusBusy: false,
+      manualStatusTimer: null,
       armStatusBusy: false,
       armStatusError: "",
       armStatusTimer: null,
@@ -602,6 +609,7 @@ export default {
         vac2: false,
         valve1: false,
         valve2: false,
+        distanceMm: null,
       },
       digits: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
     };
@@ -638,11 +646,12 @@ export default {
   mounted() {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
     this.loadRuntimeSettings();
-    this.fetchManualStatus();
+    this.startManualStatusPolling();
     this.startArmStatusPolling();
   },
   beforeUnmount() {
     clearTimeout(this.timer);
+    this.stopManualStatusPolling();
     this.stopArmStatusPolling();
     this.stopImeiDetection();
     this.stopCameraViewer();
@@ -746,6 +755,10 @@ export default {
       const value = this.armSoftLimits[axis];
       return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "--";
     },
+    formattedDistanceMm() {
+      const value = this.manualStatus.distanceMm;
+      return Number.isFinite(Number(value)) ? Number(value).toFixed(0) : "--";
+    },
     deltaMovesTowardLimit(axis, delta) {
       if (!delta) {
         return false;
@@ -783,6 +796,21 @@ export default {
       if (this.armStatusTimer) {
         clearInterval(this.armStatusTimer);
         this.armStatusTimer = null;
+      }
+    },
+    startManualStatusPolling() {
+      this.stopManualStatusPolling();
+      this.fetchManualStatus();
+      this.manualStatusTimer = setInterval(() => {
+        if (this.step === 0 && !this.manualControlBusy) {
+          this.fetchManualStatus();
+        }
+      }, 1000);
+    },
+    stopManualStatusPolling() {
+      if (this.manualStatusTimer) {
+        clearInterval(this.manualStatusTimer);
+        this.manualStatusTimer = null;
       }
     },
     updateArmStatus(status) {
@@ -839,6 +867,7 @@ export default {
           vac2: this.parseManualStatusBool(status.vac2),
           valve1: this.parseManualStatusBool(status.valve1),
           valve2: this.parseManualStatusBool(status.valve2),
+          distanceMm: this.parseManualStatusNumber(status.distanceMm),
         };
       } catch (error) {
         if (this.step === 0) {
@@ -1449,6 +1478,25 @@ export default {
   padding: 10px 14px;
   font-size: 22px;
   font-weight: 700;
+}
+
+.sensor-status-card {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.sensor-distance-value {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 .control-group {

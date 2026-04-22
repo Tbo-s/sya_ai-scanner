@@ -1,4 +1,13 @@
+#include <Wire.h>
+#include <SparkFun_VL53L1X.h>
 #include <Servo.h>
+
+// =========================
+// Distance sensor
+// =========================
+SFEVL53L1X distanceSensor;
+bool distanceSensorOk = false;
+uint16_t lastDistanceMm = 0;
 
 // =========================
 // Servo objects
@@ -20,9 +29,13 @@ const int wrist2ServoPin      = 12;
 // Switches (NC -> INPUT_PULLUP)
 // C -> GND, NC -> pin
 // geraakt = HIGH
+//
+// I2C gebruikt pin 2/3 op Leonardo
+// Gate blijft op 4/5
+// Tray verhuist naar A2/A3
 // =========================
-const int gateOpenSwitch  = 2;
-const int gateCloseSwitch = 3;
+const int gateOpenSwitch  = A2;
+const int gateCloseSwitch = A3;
 const int trayOutSwitch   = 4;
 const int trayInSwitch    = 5;
 
@@ -94,35 +107,35 @@ void updateTrayPositionFromSwitches();
 void printGatePosition();
 void printTrayPosition();
 void printStatus();
-
 void setWrist1Angle(int logicalAngle);
 void setWrist2Angle(int logicalAngle);
+void initDistanceSensor();
+void updateDistanceMeasurement();
+void printDistance();
+void printDistanceStatus();
 
 // =========================
 // Setup
 // =========================
 void setup() {
   Serial.begin(115200);
+  Wire.begin();
 
-  // Attach servos
   servoGate.attach(gateServoPin);
   servoPhoneLoader.attach(phoneLoaderServoPin);
   servoWrist1.attach(wrist1ServoPin);
   servoWrist2.attach(wrist2ServoPin);
 
-  // Switches
   pinMode(gateOpenSwitch, INPUT_PULLUP);
   pinMode(gateCloseSwitch, INPUT_PULLUP);
   pinMode(trayOutSwitch, INPUT_PULLUP);
   pinMode(trayInSwitch, INPUT_PULLUP);
 
-  // MOSFET outputs
   pinMode(vacuumMotor1Pin, OUTPUT);
   pinMode(vacuumMotor2Pin, OUTPUT);
   pinMode(valve1Pin, OUTPUT);
   pinMode(valve2Pin, OUTPUT);
 
-  // Safe startup states
   stopGate();
   stopTray();
 
@@ -137,6 +150,8 @@ void setup() {
   updateGatePositionFromSwitches();
   updateTrayPositionFromSwitches();
 
+  initDistanceSensor();
+
   Serial.println("Leonardo ready");
   printStatus();
 }
@@ -148,6 +163,7 @@ void loop() {
   handleSerial();
   updateGate();
   updateTray();
+  updateDistanceMeasurement();
 
   if (gateState == GATE_IDLE) {
     updateGatePositionFromSwitches();
@@ -167,9 +183,6 @@ void handleSerial() {
   String cmd = Serial.readStringUntil('\n');
   cmd.trim();
 
-  // -------------------------
-  // Gate commands
-  // -------------------------
   if (cmd == "GATE_OPEN") {
     gateState = GATE_OPENING;
     servoGate.write(GATE_OPEN_SPEED);
@@ -190,9 +203,6 @@ void handleSerial() {
     printGatePosition();
   }
 
-  // -------------------------
-  // Tray / phone loader commands
-  // -------------------------
   else if (cmd == "TRAY_OUT") {
     trayState = TRAY_OPENING;
     servoPhoneLoader.write(TRAY_OUT_SPEED);
@@ -210,9 +220,6 @@ void handleSerial() {
     Serial.println("TRAY_STOPPED");
   }
 
-  // -------------------------
-  // Wrist commands
-  // -------------------------
   else if (cmd.startsWith("WRIST1_ANGLE:")) {
     int angle = cmd.substring(String("WRIST1_ANGLE:").length()).toInt();
     setWrist1Angle(angle);
@@ -230,8 +237,6 @@ void handleSerial() {
     setWrist2Angle(90);
     Serial.println("WRIST_HOME_DONE");
   }
-
-  // Handige vaste posities
   else if (cmd == "WRIST1_LEFT") {
     setWrist1Angle(0);
     Serial.println("WRIST1_LEFT_DONE");
@@ -257,9 +262,6 @@ void handleSerial() {
     Serial.println("WRIST2_RIGHT_DONE");
   }
 
-  // -------------------------
-  // Vacuum motor commands
-  // -------------------------
   else if (cmd == "VAC1_ON") {
     digitalWrite(vacuumMotor1Pin, HIGH);
     Serial.println("VAC1_ON_DONE");
@@ -287,9 +289,6 @@ void handleSerial() {
     Serial.println("VAC_ALL_OFF_DONE");
   }
 
-  // -------------------------
-  // Valve commands
-  // -------------------------
   else if (cmd == "VALVE1_ON") {
     digitalWrite(valve1Pin, HIGH);
     Serial.println("VALVE1_ON_DONE");
@@ -317,9 +316,13 @@ void handleSerial() {
     Serial.println("VALVE_ALL_OFF_DONE");
   }
 
-  // -------------------------
-  // Global
-  // -------------------------
+  else if (cmd == "DISTANCE_MM") {
+    printDistance();
+  }
+  else if (cmd == "DISTANCE_STATUS") {
+    printDistanceStatus();
+  }
+
   else if (cmd == "STOP_ALL") {
     stopGate();
     stopTray();
@@ -343,6 +346,53 @@ void handleSerial() {
   else {
     Serial.print("ERROR:UNKNOWN_COMMAND:");
     Serial.println(cmd);
+  }
+}
+
+// =========================
+// Distance sensor
+// =========================
+void initDistanceSensor() {
+  if (distanceSensor.init()) {
+    distanceSensorOk = true;
+
+    // optioneel maar handig
+    distanceSensor.setDistanceModeShort();      // korte afstand = vaak beter voor jouw toepassing
+    distanceSensor.setTimingBudgetInMs(50);     // mag ook 20/33/50/100 zijn
+    distanceSensor.setIntermeasurementPeriod(50);
+
+    distanceSensor.startRanging();
+    Serial.println("DISTANCE_SENSOR_READY");
+  } else {
+    distanceSensorOk = false;
+    Serial.println("DISTANCE_SENSOR_INIT_FAILED");
+  }
+}
+
+void updateDistanceMeasurement() {
+  if (!distanceSensorOk) return;
+
+  if (distanceSensor.checkForDataReady()) {
+    lastDistanceMm = distanceSensor.getDistance();
+    distanceSensor.clearInterrupt();
+  }
+}
+
+void printDistance() {
+  if (!distanceSensorOk) {
+    Serial.println("DISTANCE_MM=ERROR");
+    return;
+  }
+
+  Serial.print("DISTANCE_MM=");
+  Serial.println(lastDistanceMm);
+}
+
+void printDistanceStatus() {
+  if (distanceSensorOk) {
+    Serial.println("DISTANCE_OK");
+  } else {
+    Serial.println("DISTANCE_ERROR");
   }
 }
 
@@ -549,6 +599,13 @@ void printStatus() {
 
   Serial.print(", valve2=");
   Serial.print(digitalRead(valve2Pin));
+
+  Serial.print(", distanceMm=");
+  if (distanceSensorOk) {
+    Serial.print(lastDistanceMm);
+  } else {
+    Serial.print("ERROR");
+  }
 
   Serial.print(", gateOpenSw=");
   Serial.print(digitalRead(gateOpenSwitch));
