@@ -138,6 +138,7 @@ void setup() {
   digitalWrite(vacuumMotor2Pin, LOW);
   digitalWrite(valve1Pin, LOW);
   digitalWrite(valve2Pin, LOW);
+  
 
   updateGatePositionFromSwitches();
   updateTrayPositionFromSwitches();
@@ -146,6 +147,7 @@ void setup() {
 
   Serial.println("Leonardo ready");
   printStatus();
+
 }
 
 // =========================
@@ -458,14 +460,27 @@ void stopTray() {
   servoPhoneLoader.write(SERVO_STOP);
 }
 
+// Toegelaten uitgebreid bereik
+const int WRIST_MIN_ANGLE = -5;
+const int WRIST_MAX_ANGLE = 182;
+
+// Pas deze eventueel nog fijn aan na testen
+const int WRIST_MIN_US = 500;
+const int WRIST_MAX_US = 2500;
+
+int angleToMicroseconds(int angle) {
+  angle = constrain(angle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
+  return map(angle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE, WRIST_MIN_US, WRIST_MAX_US);
+}
+
 void setWrist1Angle(int logicalAngle) {
-  wrist1Angle = constrain(logicalAngle, 0, 180);
-  servoWrist1.write(wrist1Angle);
+  wrist1Angle = constrain(logicalAngle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
+  servoWrist1.writeMicroseconds(angleToMicroseconds(wrist1Angle));
 }
 
 void setWrist2Angle(int logicalAngle) {
-  wrist2Angle = constrain(logicalAngle, 0, 180);
-  servoWrist2.write(wrist2Angle);
+  wrist2Angle = constrain(logicalAngle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
+  servoWrist2.writeMicroseconds(angleToMicroseconds(wrist2Angle));
 }
 
 // =========================
