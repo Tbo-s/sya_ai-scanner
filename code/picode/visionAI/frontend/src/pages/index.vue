@@ -579,6 +579,7 @@ export default {
       cameraViewerOpen: false,
       cameraViewerSource: "",
       cameraViewerImageUrl: "",
+      cameraViewerImageBlob: null,
       cameraViewerTimer: null,
       cameraViewerError: "",
       cameraViewerBusy: false,
@@ -1131,6 +1132,7 @@ export default {
         URL.revokeObjectURL(this.cameraViewerImageUrl);
       }
       this.cameraViewerImageUrl = "";
+      this.cameraViewerImageBlob = null;
     },
     async refreshCameraViewerImage() {
       if (!this.cameraViewerSource || this.cameraViewerBusy) {
@@ -1149,6 +1151,7 @@ export default {
         }
         const imageUrl = URL.createObjectURL(response.data);
         this.revokeCameraViewerImage();
+        this.cameraViewerImageBlob = response.data;
         this.cameraViewerImageUrl = imageUrl;
         this.cameraViewerError = "";
       } catch (error) {
@@ -1182,38 +1185,33 @@ export default {
       this.cameraViewerError = `Kon geen foto ophalen van ${sourceLabel}.`;
     },
     async saveCameraViewerPhoto() {
-      if (!this.cameraViewerSource || this.cameraViewerBusy || this.cameraViewerSaveBusy) {
+      if (!this.cameraViewerSource || !this.cameraViewerImageBlob || this.cameraViewerSaveBusy) {
         return;
       }
 
       const source = this.cameraViewerSource;
-      if (this.cameraViewerTimer) {
-        clearTimeout(this.cameraViewerTimer);
-        this.cameraViewerTimer = null;
-      }
-
       this.cameraViewerSaveBusy = true;
       this.cameraViewerSaveError = "";
       this.cameraViewerSaveSuccess = "";
 
       try {
-        const response = await axios.post(`/api/camera/snapshot/${source}/save`, {
-          tag: "camera_view",
-        });
-        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
-          this.cameraViewerSaveSuccess = `Foto opgeslagen: ${response.data?.filename || "ok"}`;
-        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const filename = `${timestamp}_${source}_camera_view.jpg`;
+        const downloadUrl = URL.createObjectURL(this.cameraViewerImageBlob);
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(downloadUrl);
+        this.cameraViewerSaveSuccess = `Foto opgeslagen: ${filename}`;
       } catch (error) {
-        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
-          this.cameraViewerSaveError =
-            this.stringifyErrorDetail(error?.response?.data?.detail) ||
-            "Kon foto niet opslaan.";
-        }
+        this.cameraViewerSaveError =
+          this.stringifyErrorDetail(error?.message) ||
+          "Kon foto niet opslaan.";
       } finally {
         this.cameraViewerSaveBusy = false;
-        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
-          this.scheduleCameraViewerRefresh();
-        }
       }
     },
     async getCameraViewerErrorMessage(error, source) {
