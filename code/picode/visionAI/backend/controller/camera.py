@@ -103,6 +103,13 @@ class PiCaptureRequest(BaseModel):
     warmup_ms: int = Field(default=500, ge=0, le=5000)
 
 
+class CameraSnapshotSaveRequest(BaseModel):
+    tag: str = "camera_view"
+    width: int = Field(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000)
+    height: int = Field(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000)
+    warmup_ms: int = Field(default=500, ge=0, le=5000)
+
+
 def _get_photo_storage_dir() -> Path:
     return Path(os.getenv("APP_PHOTO_STORAGE_DIR", "/tmp/sya_photos"))
 
@@ -112,6 +119,13 @@ def _get_pi_capture_dir() -> Path:
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parent.parent / "data" / "captures"
+
+
+def _get_camera_capture_dir() -> Path:
+    configured = os.getenv("APP_CAMERA_CAPTURE_DIR", "").strip()
+    if configured:
+        return Path(configured)
+    return _get_pi_capture_dir()
 
 
 def _get_pi_camera_focus_range() -> str:
@@ -414,6 +428,34 @@ def camera_snapshot(
             headers={"Cache-Control": "no-store"},
         )
     raise HTTPException(status_code=400, detail="Unknown camera source. Use 'usb' or 'pi'.")
+
+
+@router.post("/camera/snapshot/{source}/save", tags=["Camera"])
+def save_camera_snapshot(source: str, payload: CameraSnapshotSaveRequest):
+    normalized = source.strip().lower()
+    if normalized == "usb":
+        camera_manager.start()
+        jpeg_bytes = _encode_jpeg(camera_manager.wait_for_frame())
+    elif normalized == "pi":
+        jpeg_bytes = _capture_pi_csi_jpeg(payload.width, payload.height, payload.warmup_ms)
+    else:
+        raise HTTPException(status_code=400, detail="Unknown camera source. Use 'usb' or 'pi'.")
+
+    capture_dir = _get_camera_capture_dir()
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    source_part = _safe_filename_part(normalized, "camera")
+    tag_part = _safe_filename_part(payload.tag, "camera_view")
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{timestamp}_{source_part}_{tag_part}.jpg"
+    file_path = capture_dir / filename
+    file_path.write_bytes(jpeg_bytes)
+    return {
+        "saved": True,
+        "source": normalized,
+        "tag": payload.tag,
+        "filename": filename,
+        "path": str(file_path),
+    }
 
 
 @router.post("/camera/capture", tags=["Camera"])

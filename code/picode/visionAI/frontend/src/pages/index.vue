@@ -74,6 +74,20 @@
               @load="handleCameraViewerImageLoad"
               @error="handleCameraViewerImageError"
             />
+            <div v-if="cameraViewerSource" class="camera-save-row">
+              <v-btn
+                color="success"
+                variant="tonal"
+                prepend-icon="mdi-content-save"
+                :loading="cameraViewerSaveBusy"
+                :disabled="!cameraViewerImageUrl || cameraViewerBusy || cameraViewerSaveBusy"
+                @click="saveCameraViewerPhoto"
+              >
+                Foto opslaan
+              </v-btn>
+              <div v-if="cameraViewerSaveSuccess" class="secondary-text">{{ cameraViewerSaveSuccess }}</div>
+              <div v-if="cameraViewerSaveError" class="error-text">{{ cameraViewerSaveError }}</div>
+            </div>
           </v-card-text>
           <v-card-actions>
             <v-spacer />
@@ -568,6 +582,9 @@ export default {
       cameraViewerTimer: null,
       cameraViewerError: "",
       cameraViewerBusy: false,
+      cameraViewerSaveBusy: false,
+      cameraViewerSaveError: "",
+      cameraViewerSaveSuccess: "",
       showManualImeiInput: false,
       manualImeiInput: "",
       manualImeiError: "",
@@ -1075,6 +1092,8 @@ export default {
     openCameraViewer() {
       this.cameraViewerOpen = true;
       this.cameraViewerError = "";
+      this.cameraViewerSaveError = "";
+      this.cameraViewerSaveSuccess = "";
     },
     closeCameraViewer() {
       this.cameraViewerOpen = false;
@@ -1089,6 +1108,8 @@ export default {
       this.stopCameraViewer(false);
       this.cameraViewerSource = source;
       this.cameraViewerError = "";
+      this.cameraViewerSaveError = "";
+      this.cameraViewerSaveSuccess = "";
       this.cameraViewerImageUrl = "";
       this.refreshCameraViewerImage();
     },
@@ -1100,6 +1121,8 @@ export default {
       this.cameraViewerBusy = false;
       if (clearSelection) {
         this.cameraViewerSource = "";
+        this.cameraViewerSaveError = "";
+        this.cameraViewerSaveSuccess = "";
         this.revokeCameraViewerImage();
       }
     },
@@ -1157,6 +1180,41 @@ export default {
     handleCameraViewerImageError() {
       const sourceLabel = this.cameraViewerSource === "pi" ? "Pi camera" : "USB camera";
       this.cameraViewerError = `Kon geen foto ophalen van ${sourceLabel}.`;
+    },
+    async saveCameraViewerPhoto() {
+      if (!this.cameraViewerSource || this.cameraViewerBusy || this.cameraViewerSaveBusy) {
+        return;
+      }
+
+      const source = this.cameraViewerSource;
+      if (this.cameraViewerTimer) {
+        clearTimeout(this.cameraViewerTimer);
+        this.cameraViewerTimer = null;
+      }
+
+      this.cameraViewerSaveBusy = true;
+      this.cameraViewerSaveError = "";
+      this.cameraViewerSaveSuccess = "";
+
+      try {
+        const response = await axios.post(`/api/camera/snapshot/${source}/save`, {
+          tag: "camera_view",
+        });
+        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
+          this.cameraViewerSaveSuccess = `Foto opgeslagen: ${response.data?.filename || "ok"}`;
+        }
+      } catch (error) {
+        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
+          this.cameraViewerSaveError =
+            this.stringifyErrorDetail(error?.response?.data?.detail) ||
+            "Kon foto niet opslaan.";
+        }
+      } finally {
+        this.cameraViewerSaveBusy = false;
+        if (this.cameraViewerOpen && this.cameraViewerSource === source) {
+          this.scheduleCameraViewerRefresh();
+        }
+      }
     },
     async getCameraViewerErrorMessage(error, source) {
       const sourceLabel = source === "pi" ? "Pi camera" : "USB camera";
@@ -1407,6 +1465,9 @@ export default {
       this.cameraViewerOpen = false;
       this.cameraViewerError = "";
       this.cameraViewerBusy = false;
+      this.cameraViewerSaveBusy = false;
+      this.cameraViewerSaveError = "";
+      this.cameraViewerSaveSuccess = "";
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
@@ -1642,6 +1703,15 @@ export default {
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.24);
+}
+
+.camera-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
 }
 
 .camera-stream {
