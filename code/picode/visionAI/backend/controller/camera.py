@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 router = APIRouter()
 PI_CAMERA_FULL_WIDTH = 4608
@@ -100,14 +101,14 @@ class PiCaptureRequest(BaseModel):
     tag: str = "capture"
     width: int = Field(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000)
     height: int = Field(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000)
-    warmup_ms: int = Field(default=500, ge=0, le=5000)
+    warmup_ms: Optional[int] = Field(default=None, ge=0, le=5000)
 
 
 class CameraSnapshotSaveRequest(BaseModel):
     tag: str = "camera_view"
     width: int = Field(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000)
     height: int = Field(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000)
-    warmup_ms: int = Field(default=500, ge=0, le=5000)
+    warmup_ms: Optional[int] = Field(default=None, ge=0, le=5000)
 
 
 def _get_photo_storage_dir() -> Path:
@@ -133,6 +134,47 @@ def _get_pi_camera_focus_range() -> str:
     return focus_range if focus_range in PI_CAMERA_FOCUS_RANGES else "macro"
 
 
+def _get_pi_camera_af_speed() -> str:
+    autofocus_speed = os.getenv("APP_PI_CAMERA_AF_SPEED", "normal").strip().lower()
+    return autofocus_speed if autofocus_speed in {"normal", "fast"} else "normal"
+
+
+def _get_pi_camera_af_window() -> str:
+    raw = os.getenv("APP_PI_CAMERA_AF_WINDOW", "0.25,0.25,0.5,0.5").strip()
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 4:
+        return "0.25,0.25,0.5,0.5"
+    try:
+        values = [min(1.0, max(0.0, float(part))) for part in parts]
+    except ValueError:
+        return "0.25,0.25,0.5,0.5"
+    return ",".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in values)
+
+
+def _get_pi_camera_lens_position() -> Optional[float]:
+    raw = os.getenv("APP_PI_CAMERA_LENS_POSITION", "5.0").strip().lower()
+    if raw in {"", "auto", "autofocus", "default"}:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 5.0
+
+
+def _get_pi_camera_warmup_ms() -> int:
+    try:
+        return min(5000, max(0, int(os.getenv("APP_PI_CAMERA_WARMUP_MS", "1200"))))
+    except ValueError:
+        return 1200
+
+
+def _get_pi_camera_focus_settle_ms() -> int:
+    try:
+        return min(5000, max(0, int(os.getenv("APP_PI_CAMERA_FOCUS_SETTLE_MS", "350"))))
+    except ValueError:
+        return 350
+
+
 def _safe_filename_part(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
     return normalized or fallback
@@ -156,8 +198,34 @@ def _wait_for_picamera_job(picam2, job) -> None:
 
 
 def _run_pi_autofocus_cycle(picam2, controls_module) -> None:
+    manual_lens_position = _get_pi_camera_lens_position()
+    if manual_lens_position is not None:
+        try:
+            lens_control = getattr(picam2, "camera_controls", {}).get("LensPosition")
+            if lens_control and len(lens_control) >= 2:
+                min_lens = float(lens_control[0])
+                max_lens = float(lens_control[1])
+                manual_lens_position = max(min_lens, min(max_lens, manual_lens_position))
+        except Exception:
+            pass
+
+        try:
+            picam2.set_controls(
+                {
+                    "AfMode": controls_module.AfModeEnum.Manual,
+                    "LensPosition": manual_lens_position,
+                }
+            )
+            settle_ms = _get_pi_camera_focus_settle_ms()
+            if settle_ms > 0:
+                time.sleep(settle_ms / 1000.0)
+            return
+        except Exception:
+            pass
+
+    focus_controls = {}
     try:
-        picam2.set_controls({"AfMode": controls_module.AfModeEnum.Auto})
+        focus_controls["AfMode"] = controls_module.AfModeEnum.Auto
     except Exception:
         pass
 
@@ -166,10 +234,20 @@ def _run_pi_autofocus_cycle(picam2, controls_module) -> None:
         enum_name = _get_pi_camera_focus_range().capitalize()
         enum_value = getattr(focus_range_enum, enum_name, None)
         if enum_value is not None:
-            try:
-                picam2.set_controls({"AfRange": enum_value})
-            except Exception:
-                pass
+            focus_controls["AfRange"] = enum_value
+
+    focus_speed_enum = getattr(controls_module, "AfSpeedEnum", None)
+    if focus_speed_enum is not None:
+        enum_name = _get_pi_camera_af_speed().capitalize()
+        enum_value = getattr(focus_speed_enum, enum_name, None)
+        if enum_value is not None:
+            focus_controls["AfSpeed"] = enum_value
+
+    if focus_controls:
+        try:
+            picam2.set_controls(focus_controls)
+        except Exception:
+            pass
 
     autofocus_cycle = getattr(picam2, "autofocus_cycle", None)
     if callable(autofocus_cycle):
@@ -245,6 +323,9 @@ def _get_pi_still_command() -> str:
 def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
     command = _get_pi_still_command()
     focus_range = _get_pi_camera_focus_range()
+    focus_speed = _get_pi_camera_af_speed()
+    focus_window = _get_pi_camera_af_window()
+    manual_lens_position = _get_pi_camera_lens_position()
     timeout_ms = max(warmup_ms, 2000)
     base_command = [
         command,
@@ -261,13 +342,24 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
         str(timeout_ms),
     ]
 
-    focus_candidates = (
-        ["--autofocus-mode", "auto", "--autofocus-range", focus_range, "--autofocus-on-capture"],
-        ["--autofocus-on-capture", "--autofocus-range", focus_range],
-        ["--autofocus-mode", "auto", "--autofocus-range", focus_range],
-        ["--autofocus-range", focus_range],
-        [],
-    )
+    autofocus_options: list[list[str]] = []
+    full_autofocus_options = ["--autofocus-mode", "auto", "--autofocus-range", focus_range, "--autofocus-speed", focus_speed]
+    if focus_window:
+        full_autofocus_options.extend(["--autofocus-window", focus_window])
+    autofocus_options.append(full_autofocus_options + ["--autofocus-on-capture"])
+    autofocus_options.append(full_autofocus_options)
+    autofocus_options.append(["--autofocus-on-capture", "--autofocus-range", focus_range, "--autofocus-speed", focus_speed])
+    autofocus_options.append(["--autofocus-range", focus_range, "--autofocus-speed", focus_speed])
+    autofocus_options.append(["--autofocus-range", focus_range])
+    autofocus_options.append([])
+
+    focus_candidates = tuple(autofocus_options)
+    if manual_lens_position is not None:
+        focus_candidates = (
+            ["--autofocus-mode", "manual", "--lens-position", f"{manual_lens_position:.3f}"],
+            ["--lens-position", f"{manual_lens_position:.3f}"],
+            *focus_candidates,
+        )
 
     for focus_options in focus_candidates:
         candidate = base_command + focus_options
@@ -415,15 +507,16 @@ def camera_snapshot(
     source: str,
     width: int = Query(default=PI_CAMERA_FULL_WIDTH, ge=320, le=5000),
     height: int = Query(default=PI_CAMERA_FULL_HEIGHT, ge=240, le=5000),
-    warmup_ms: int = Query(default=500, ge=0, le=5000),
+    warmup_ms: Optional[int] = Query(default=None, ge=0, le=5000),
 ):
     normalized = source.strip().lower()
+    resolved_warmup_ms = _get_pi_camera_warmup_ms() if warmup_ms is None else warmup_ms
     if normalized == "usb":
         camera_manager.start()
         return _encode_jpeg_response(camera_manager.wait_for_frame())
     if normalized == "pi":
         return Response(
-            content=_capture_pi_csi_jpeg(width, height, warmup_ms),
+            content=_capture_pi_csi_jpeg(width, height, resolved_warmup_ms),
             media_type="image/jpeg",
             headers={"Cache-Control": "no-store"},
         )
@@ -433,11 +526,12 @@ def camera_snapshot(
 @router.post("/camera/snapshot/{source}/save", tags=["Camera"])
 def save_camera_snapshot(source: str, payload: CameraSnapshotSaveRequest):
     normalized = source.strip().lower()
+    resolved_warmup_ms = _get_pi_camera_warmup_ms() if payload.warmup_ms is None else payload.warmup_ms
     if normalized == "usb":
         camera_manager.start()
         jpeg_bytes = _encode_jpeg(camera_manager.wait_for_frame())
     elif normalized == "pi":
-        jpeg_bytes = _capture_pi_csi_jpeg(payload.width, payload.height, payload.warmup_ms)
+        jpeg_bytes = _capture_pi_csi_jpeg(payload.width, payload.height, resolved_warmup_ms)
     else:
         raise HTTPException(status_code=400, detail="Unknown camera source. Use 'usb' or 'pi'.")
 
@@ -473,5 +567,6 @@ def capture_pi_camera_photo(payload: PiCaptureRequest):
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"{timestamp}_{imei_part}_{tag_part}.jpg"
     file_path = capture_dir / filename
-    file_path.write_bytes(_capture_pi_csi_jpeg(payload.width, payload.height, payload.warmup_ms))
+    resolved_warmup_ms = _get_pi_camera_warmup_ms() if payload.warmup_ms is None else payload.warmup_ms
+    file_path.write_bytes(_capture_pi_csi_jpeg(payload.width, payload.height, resolved_warmup_ms))
     return {"saved": True, "filename": filename, "path": str(file_path), "imei": payload.imei, "tag": payload.tag}
