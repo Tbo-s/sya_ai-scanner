@@ -764,6 +764,12 @@ export default {
     isManualActionBusy(actionKey) {
       return this.manualControlBusy === actionKey;
     },
+    manualLeonardoRequestConfig(timeoutMs = 5000) {
+      return { timeout: timeoutMs };
+    },
+    isRequestTimeout(error) {
+      return error?.code === "ECONNABORTED" || /timeout/i.test(String(error?.message || ""));
+    },
     parseManualStatusInt(value) {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : null;
@@ -888,7 +894,7 @@ export default {
 
       this.manualStatusBusy = true;
       try {
-        const response = await axios.get("/api/arduino/leonardo/status");
+        const response = await axios.get("/api/arduino/leonardo/status", this.manualLeonardoRequestConfig(1500));
         if (!response.data?.found) {
           return;
         }
@@ -905,6 +911,9 @@ export default {
           distanceMm: this.parseManualStatusNumber(status.distanceMm),
         };
       } catch (error) {
+        if (this.isRequestTimeout(error)) {
+          return;
+        }
         if (this.step === 0) {
           this.manualControlError =
             this.stringifyErrorDetail(error?.response?.data?.detail) ||
@@ -935,9 +944,10 @@ export default {
           onSuccess(response?.data || {});
         }
       } catch (error) {
-        this.manualControlError =
-          this.stringifyErrorDetail(error?.response?.data?.detail) ||
-          "Manuele beweging mislukt.";
+        this.manualControlError = this.isRequestTimeout(error)
+          ? "Toestel reageerde niet op tijd; verzoek afgebroken."
+          : this.stringifyErrorDetail(error?.response?.data?.detail) ||
+            "Manuele beweging mislukt.";
       } finally {
         this.manualControlBusy = "";
       }
@@ -990,7 +1000,7 @@ export default {
       await this.runManualAction(
         `tray:${isOpening ? "out" : "in"}`,
         `Tray ${isOpening ? "geopend" : "gesloten"}.`,
-        () => axios.post("/api/arduino/leonardo/tray", { command })
+        () => axios.post("/api/arduino/leonardo/tray", { command }, this.manualLeonardoRequestConfig())
       );
     },
     trayStopDisabled() {
@@ -1009,12 +1019,13 @@ export default {
       this.manualControlSuccess = "";
 
       try {
-        await axios.post("/api/arduino/leonardo/tray", { command: "TRAY_STOP" });
+        await axios.post("/api/arduino/leonardo/tray", { command: "TRAY_STOP" }, this.manualLeonardoRequestConfig());
         this.manualControlSuccess = "Tray gestopt.";
       } catch (error) {
-        this.manualControlError =
-          this.stringifyErrorDetail(error?.response?.data?.detail) ||
-          "Tray stoppen mislukt.";
+        this.manualControlError = this.isRequestTimeout(error)
+          ? "Tray reageerde niet op tijd; verzoek afgebroken."
+          : this.stringifyErrorDetail(error?.response?.data?.detail) ||
+            "Tray stoppen mislukt.";
       } finally {
         if (this.manualControlBusy === "tray:stop") {
           this.manualControlBusy = "";
@@ -1026,7 +1037,7 @@ export default {
       await this.runManualAction(
         `w${wristIndex}:${delta}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }),
+        () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }, this.manualLeonardoRequestConfig()),
         (data) => {
           const angle = this.parseManualStatusInt(data?.angle);
           if (angle !== null) {
@@ -1040,7 +1051,8 @@ export default {
       await this.runManualAction(
         `vac${vacuumIndex}:motor:${enabled ? "on" : "off"}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }),
+        () =>
+          axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }, this.manualLeonardoRequestConfig()),
         () => {
           this.manualStatus[`vac${vacuumIndex}`] = enabled;
         }
@@ -1051,7 +1063,8 @@ export default {
       await this.runManualAction(
         `vac${vacuumIndex}:valve:${enabled ? "on" : "off"}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }),
+        () =>
+          axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }, this.manualLeonardoRequestConfig()),
         () => {
           this.manualStatus[`valve${vacuumIndex}`] = enabled;
         }
@@ -1061,7 +1074,7 @@ export default {
       await this.runManualAction(
         "stop-all",
         "Alles gestopt.",
-        () => axios.post("/api/arduino/emergency-stop-all"),
+        () => axios.post("/api/arduino/emergency-stop-all", {}, this.manualLeonardoRequestConfig(6000)),
         () => {
           this.manualStatus.vac1 = false;
           this.manualStatus.vac2 = false;
@@ -1265,7 +1278,7 @@ export default {
     toggleCamera(enabled) {
       this.showCamera = enabled;
       this.cameraKey += 1;
-      axios.post("/api/arduino/servo", { enabled }).catch((error) => {
+      axios.post("/api/arduino/servo", { enabled }, this.manualLeonardoRequestConfig()).catch((error) => {
         console.error("Failed to toggle Arduino servo", error);
       });
     },
@@ -1334,9 +1347,11 @@ export default {
       this.gateCommandBusy = true;
       this.gateCommandError = "";
       try {
-        await axios.post("/api/arduino/leonardo/gate", { command });
+        await axios.post("/api/arduino/leonardo/gate", { command }, this.manualLeonardoRequestConfig());
       } catch (error) {
-        this.gateCommandError = error?.response?.data?.detail || "Kon gate-commando niet versturen.";
+        this.gateCommandError = this.isRequestTimeout(error)
+          ? "Gate reageerde niet op tijd; verzoek afgebroken."
+          : error?.response?.data?.detail || "Kon gate-commando niet versturen.";
       } finally {
         this.gateCommandBusy = false;
       }
@@ -1344,7 +1359,7 @@ export default {
     async fetchGatePosition() {
       this.gatePositionBusy = true;
       try {
-        const response = await axios.get("/api/arduino/leonardo/gate-position");
+        const response = await axios.get("/api/arduino/leonardo/gate-position", this.manualLeonardoRequestConfig(1500));
         this.gatePosition = response.data?.position || "";
       } catch (error) {
         this.gateCommandError = error?.response?.data?.detail || "Kon gate positie niet lezen.";

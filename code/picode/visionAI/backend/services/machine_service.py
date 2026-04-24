@@ -45,6 +45,10 @@ def _get_leonardo_write_retry_delay_s() -> float:
     return max(0.0, float(os.getenv("APP_LEONARDO_WRITE_RETRY_DELAY_S", "0.35")))
 
 
+def _get_leonardo_write_timeout_s() -> float:
+    return max(0.1, float(os.getenv("APP_LEONARDO_WRITE_TIMEOUT_S", "1.0")))
+
+
 def _use_persistent_leonardo_serial() -> bool:
     return os.getenv("APP_LEONARDO_PERSISTENT_SERIAL", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -121,13 +125,34 @@ def _reset_serial_buffers(ser: serial.Serial):
 
 def _write_serial_line(ser: serial.Serial, line: str):
     ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
-    ser.flush()
+
+
+def _set_serial_lines_inactive(ser: serial.Serial):
+    for line_signal in ("dtr", "rts"):
+        if hasattr(ser, line_signal):
+            try:
+                setattr(ser, line_signal, False)
+            except Exception:
+                pass
 
 
 def _is_serial_write_timeout(exc: Exception) -> bool:
     if isinstance(exc, serial.SerialTimeoutException):
         return True
     return "write timeout" in str(exc).strip().lower()
+
+
+def _open_leonardo_serial(port: str, baudrate: int) -> serial.Serial:
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baudrate
+    ser.timeout = 0.2
+    ser.write_timeout = _get_leonardo_write_timeout_s()
+    _set_serial_lines_inactive(ser)
+    ser.open()
+    _set_serial_lines_inactive(ser)
+    _reset_serial_buffers(ser)
+    return ser
 
 
 def _get_leonardo_serial() -> serial.Serial:
@@ -144,14 +169,13 @@ def _get_leonardo_serial() -> serial.Serial:
         return _LEONARDO_SERIAL
 
     _close_leonardo_serial()
-    _LEONARDO_SERIAL = serial.Serial(port, baudrate, timeout=0.2)
+    _LEONARDO_SERIAL = _open_leonardo_serial(port, baudrate)
     _LEONARDO_SERIAL_PORT = port
     _LEONARDO_SERIAL_BAUD = baudrate
 
     open_delay_s = _get_leonardo_open_delay_s()
     if open_delay_s > 0:
         time.sleep(open_delay_s)
-    _reset_serial_buffers(_LEONARDO_SERIAL)
 
     return _LEONARDO_SERIAL
 
@@ -188,16 +212,18 @@ def _send_line(line: str):
                         time.sleep(hold_s)
                     return
 
-                with serial.Serial(port, baudrate, timeout=0.2) as ser:
+                ser = _open_leonardo_serial(port, baudrate)
+                try:
                     open_delay_s = _get_leonardo_command_open_delay_s()
                     if open_delay_s > 0:
                         time.sleep(open_delay_s)
-                    _reset_serial_buffers(ser)
                     _write_serial_line(ser, line)
                     hold_s = _get_leonardo_post_write_hold_s()
                     if hold_s > 0:
                         time.sleep(hold_s)
                     return
+                finally:
+                    ser.close()
         except Exception as exc:
             last_exc = exc
             _close_leonardo_serial()
@@ -232,7 +258,8 @@ def _send_with_response(
             with _LEONARDO_SERIAL_LOCK:
                 if _use_persistent_leonardo_serial():
                     ser = _get_leonardo_serial()
-                    _reset_serial_buffers(ser)
+                    if hasattr(ser, "reset_input_buffer"):
+                        ser.reset_input_buffer()
                     _write_serial_line(ser, command)
                     started_at = time.time()
                     lines: list[str] = []
@@ -247,11 +274,13 @@ def _send_with_response(
                                 return lines
                     return lines
 
-                with serial.Serial(port, baudrate, timeout=0.2) as ser:
+                ser = _open_leonardo_serial(port, baudrate)
+                try:
                     delay_s = _get_leonardo_open_delay_s() if open_delay_s is None else open_delay_s
                     if delay_s > 0:
                         time.sleep(delay_s)
-                    _reset_serial_buffers(ser)
+                    if hasattr(ser, "reset_input_buffer"):
+                        ser.reset_input_buffer()
                     _write_serial_line(ser, command)
                     started_at = time.time()
                     lines: list[str] = []
@@ -265,6 +294,8 @@ def _send_with_response(
                             if stop_when is not None and stop_when(text):
                                 return lines
                     return lines
+                finally:
+                    ser.close()
         except Exception as exc:
             last_exc = exc
             _close_leonardo_serial()
@@ -394,8 +425,7 @@ def _send_sequence_with_response(
 
                 results: list[dict] = []
                 for index, command in enumerate(commands):
-                    ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                    ser.flush()
+                    _write_serial_line(ser, command)
                     started_at = time.time()
                     lines: list[str] = []
                     while time.time() - started_at < read_timeout_s:
@@ -410,16 +440,17 @@ def _send_sequence_with_response(
                         time.sleep(inter_command_delay_s)
                 return results
 
-            with serial.Serial(port, baudrate, timeout=0.2) as ser:
+            ser = _open_leonardo_serial(port, baudrate)
+            try:
                 open_delay_s = _get_leonardo_open_delay_s()
                 if open_delay_s > 0:
                     time.sleep(open_delay_s)
-                _reset_serial_buffers(ser)
+                if hasattr(ser, "reset_input_buffer"):
+                    ser.reset_input_buffer()
 
                 results: list[dict] = []
                 for index, command in enumerate(commands):
-                    ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                    ser.flush()
+                    _write_serial_line(ser, command)
                     started_at = time.time()
                     lines: list[str] = []
                     while time.time() - started_at < read_timeout_s:
@@ -433,6 +464,8 @@ def _send_sequence_with_response(
                     if inter_command_delay_s > 0 and index < len(commands) - 1:
                         time.sleep(inter_command_delay_s)
                 return results
+            finally:
+                ser.close()
     except Exception as exc:
         _close_leonardo_serial()
         raise HTTPException(
@@ -448,8 +481,7 @@ def _send_command_until_token(
     timeout_s: Optional[float] = None,
 ) -> list[str]:
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
-    ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-    ser.flush()
+    _write_serial_line(ser, command)
     started_at = time.time()
     lines: list[str] = []
     while time.time() - started_at < read_timeout_s:
@@ -810,14 +842,15 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
             if _use_persistent_leonardo_serial():
                 ser = _get_leonardo_serial()
             else:
-                ser = serial.Serial(port, baudrate, timeout=0.2)
+                ser = _open_leonardo_serial(port, baudrate)
 
             try:
                 if not _use_persistent_leonardo_serial():
                     open_delay_s = _get_leonardo_open_delay_s()
                     if open_delay_s > 0:
                         time.sleep(open_delay_s)
-                _reset_serial_buffers(ser)
+                if hasattr(ser, "reset_input_buffer"):
+                    ser.reset_input_buffer()
 
                 results: list[dict] = []
                 for index, angle in enumerate(angles):
