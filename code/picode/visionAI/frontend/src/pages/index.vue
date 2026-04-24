@@ -1,5 +1,5 @@
 <template>
-  <v-container class="page-container">
+  <v-container id="home-page" class="page-container">
     <v-btn
       v-if="showBackButton"
       icon="mdi-arrow-left"
