@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 router = APIRouter()
 PI_CAMERA_FULL_WIDTH = 4608
 PI_CAMERA_FULL_HEIGHT = 2592
@@ -189,14 +191,33 @@ def _get_pi_camera_focus_cache_ttl_s() -> int:
 
 
 def _get_pi_camera_focus_candidates() -> list[float]:
-    raw = os.getenv("APP_PI_CAMERA_FOCUS_CANDIDATES", "4.0,4.5,5.0,5.5,6.0").strip()
+    raw = os.getenv("APP_PI_CAMERA_FOCUS_CANDIDATES", "2.5,3.5,4.5,5.5,6.5,7.5,9.0,11.0").strip()
     candidates: list[float] = []
     for part in raw.split(","):
         try:
             candidates.append(max(0.0, float(part.strip())))
         except ValueError:
             continue
-    return candidates or [4.0, 4.5, 5.0, 5.5, 6.0]
+    return candidates or [2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 9.0, 11.0]
+
+
+def _normalize_focus_candidates(candidates: list[float]) -> list[float]:
+    normalized = sorted({round(max(0.0, value), 3) for value in candidates})
+    return normalized or [5.0]
+
+
+def _build_refined_focus_candidates(best_lens_position: float) -> list[float]:
+    return _normalize_focus_candidates(
+        [
+            best_lens_position - 0.75,
+            best_lens_position - 0.5,
+            best_lens_position - 0.25,
+            best_lens_position,
+            best_lens_position + 0.25,
+            best_lens_position + 0.5,
+            best_lens_position + 0.75,
+        ]
+    )
 
 
 def _safe_filename_part(value: str, fallback: str) -> str:
@@ -248,14 +269,24 @@ def _set_manual_lens_position(picam2, controls_module, lens_position: float) -> 
 
 
 def _score_focus_frame(frame) -> float:
-    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    if len(frame.shape) == 2:
+        gray = frame
+    else:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape[:2]
-    crop_height = max(32, int(height * 0.5))
-    crop_width = max(32, int(width * 0.5))
+    crop_height = max(32, int(height * 0.35))
+    crop_width = max(32, int(width * 0.35))
     start_y = max(0, (height - crop_height) // 2)
     start_x = max(0, (width - crop_width) // 2)
     crop = gray[start_y:start_y + crop_height, start_x:start_x + crop_width]
     return float(cv2.Laplacian(crop, cv2.CV_64F).var())
+
+
+def _decode_jpeg_frame(jpeg_bytes: bytes):
+    frame = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=500, detail="Failed to decode Pi camera JPEG.")
+    return frame
 
 
 def _get_cached_focus_lens_position() -> Optional[float]:
@@ -283,17 +314,24 @@ def _capture_pi_frame_with_close_focus_tuning(picam2, controls_module):
     best_score = -1.0
     best_frame = None
     best_lens_position = None
-    for lens_position in _get_pi_camera_focus_candidates():
-        try:
-            resolved_lens_position = _set_manual_lens_position(picam2, controls_module, lens_position)
-            frame = picam2.capture_array("main")
-            score = _score_focus_frame(frame)
-        except Exception:
-            continue
-        if score > best_score:
-            best_score = score
-            best_frame = frame
-            best_lens_position = resolved_lens_position
+
+    def evaluate_candidates(candidates: list[float]) -> None:
+        nonlocal best_score, best_frame, best_lens_position
+        for lens_position in _normalize_focus_candidates(candidates):
+            try:
+                resolved_lens_position = _set_manual_lens_position(picam2, controls_module, lens_position)
+                frame = picam2.capture_array("main")
+                score = _score_focus_frame(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            except Exception:
+                continue
+            if score > best_score:
+                best_score = score
+                best_frame = frame
+                best_lens_position = resolved_lens_position
+
+    evaluate_candidates(_get_pi_camera_focus_candidates())
+    if best_lens_position is not None:
+        evaluate_candidates(_build_refined_focus_candidates(best_lens_position))
 
     if best_frame is not None and best_lens_position is not None:
         _set_cached_focus_lens_position(best_lens_position)
@@ -412,6 +450,90 @@ def _get_pi_still_command() -> str:
     )
 
 
+def _capture_pi_still_jpeg_with_options(command: str, base_command: list[str], focus_options: list[str], timeout_ms: int) -> bytes:
+    candidate = base_command + focus_options
+    try:
+        completed = subprocess.run(
+            candidate,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=(timeout_ms / 1000.0) + PI_CAMERA_STILL_TIMEOUT_EXTRA_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail=f"Pi camera still command timed out: {command}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to run Pi camera still command: {exc}") from exc
+
+    if completed.returncode == 0 and completed.stdout:
+        return completed.stdout
+
+    stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
+    lowered_stderr = stderr.lower()
+    if focus_options and (
+        "ambiguous" in lowered_stderr
+        or "unrecognised option" in lowered_stderr
+        or "unrecognized option" in lowered_stderr
+    ):
+        raise ValueError("unsupported_focus_option")
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"Pi camera still command failed: {stderr or 'no output'}",
+    )
+
+
+def _capture_pi_still_jpeg_with_manual_sweep(command: str, base_command: list[str], timeout_ms: int) -> bytes:
+    cached_lens_position = _get_cached_focus_lens_position()
+    if cached_lens_position is not None:
+        for focus_options in (
+            ["--autofocus-mode", "manual", "--lens-position", f"{cached_lens_position:.3f}"],
+            ["--lens-position", f"{cached_lens_position:.3f}"],
+        ):
+            try:
+                return _capture_pi_still_jpeg_with_options(command, base_command, focus_options, timeout_ms)
+            except ValueError:
+                continue
+
+    best_score = -1.0
+    best_jpeg = None
+    best_lens_position = None
+
+    def evaluate_candidates(candidates: list[float]) -> None:
+        nonlocal best_score, best_jpeg, best_lens_position
+        for lens_position in _normalize_focus_candidates(candidates):
+            jpeg_bytes = None
+            for focus_options in (
+                ["--autofocus-mode", "manual", "--lens-position", f"{lens_position:.3f}"],
+                ["--lens-position", f"{lens_position:.3f}"],
+            ):
+                try:
+                    jpeg_bytes = _capture_pi_still_jpeg_with_options(command, base_command, focus_options, timeout_ms)
+                    break
+                except ValueError:
+                    continue
+            if jpeg_bytes is None:
+                continue
+            try:
+                score = _score_focus_frame(_decode_jpeg_frame(jpeg_bytes))
+            except Exception:
+                continue
+            if score > best_score:
+                best_score = score
+                best_jpeg = jpeg_bytes
+                best_lens_position = lens_position
+
+    evaluate_candidates(_get_pi_camera_focus_candidates())
+    if best_lens_position is not None:
+        evaluate_candidates(_build_refined_focus_candidates(best_lens_position))
+
+    if best_jpeg is not None and best_lens_position is not None:
+        _set_cached_focus_lens_position(best_lens_position)
+        return best_jpeg
+
+    raise HTTPException(status_code=500, detail="Pi camera focus sweep did not produce a valid image.")
+
+
 def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
     command = _get_pi_still_command()
     focus_range = _get_pi_camera_focus_range()
@@ -434,6 +556,12 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
         str(timeout_ms),
     ]
 
+    if _get_pi_camera_close_focus_sweep_enabled():
+        try:
+            return _capture_pi_still_jpeg_with_manual_sweep(command, base_command, timeout_ms)
+        except HTTPException:
+            pass
+
     autofocus_options: list[list[str]] = []
     full_autofocus_options = ["--autofocus-mode", "auto", "--autofocus-range", focus_range, "--autofocus-speed", focus_speed]
     if focus_window:
@@ -454,36 +582,10 @@ def _capture_pi_still_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
         )
 
     for focus_options in focus_candidates:
-        candidate = base_command + focus_options
         try:
-            completed = subprocess.run(
-                candidate,
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=(timeout_ms / 1000.0) + PI_CAMERA_STILL_TIMEOUT_EXTRA_S,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(status_code=504, detail=f"Pi camera still command timed out: {command}") from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to run Pi camera still command: {exc}") from exc
-
-        if completed.returncode == 0 and completed.stdout:
-            return completed.stdout
-
-        stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
-        lowered_stderr = stderr.lower()
-        if focus_options and (
-            "ambiguous" in lowered_stderr
-            or "unrecognised option" in lowered_stderr
-            or "unrecognized option" in lowered_stderr
-        ):
+            return _capture_pi_still_jpeg_with_options(command, base_command, focus_options, timeout_ms)
+        except ValueError:
             continue
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pi camera still command failed: {stderr or 'no output'}",
-        )
 
     raise HTTPException(status_code=500, detail="Pi camera still command failed.")
 
