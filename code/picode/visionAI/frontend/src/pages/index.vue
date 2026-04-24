@@ -775,6 +775,9 @@ export default {
     parseManualStatusBool(value) {
       return String(value ?? "") === "1";
     },
+    manualRequestConfig(timeoutMs = 5000) {
+      return { timeout: timeoutMs };
+    },
     formattedArmCoordinate(axis) {
       const value = this.armCoordinates[axis];
       return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "--";
@@ -944,13 +947,17 @@ export default {
     },
     async jogZ(delta) {
       const label = delta > 0 ? `Z-as +${delta} gestuurd.` : `Z-as ${delta} gestuurd.`;
-      await this.runManualAction(`z:${delta}`, label, () => axios.post("/api/arduino/grbl/z/jog", { delta }));
+      await this.runManualAction(
+        `z:${delta}`,
+        label,
+        () => axios.post("/api/arduino/grbl/z/jog", { delta }, this.manualRequestConfig())
+      );
     },
     async homeArm() {
       await this.runManualAction(
         "xy:home",
         "Arm gehomed naar 0,0.",
-        () => axios.post("/api/arduino/grbl/home-xy"),
+        () => axios.post("/api/arduino/grbl/home-xy", {}, this.manualRequestConfig(10000)),
         (data) => {
           this.armCoordinates = {
             x: this.parseManualStatusNumber(data?.position?.x),
@@ -965,7 +972,7 @@ export default {
       await this.runManualAction(
         actionKey || `xy:${deltaX}:${deltaY}`,
         label,
-        () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY }),
+        () => axios.post("/api/arduino/grbl/xy/jog", { x: deltaX, y: deltaY }, this.manualRequestConfig()),
         (data) => {
           if (data?.position) {
             this.armCoordinates = {
@@ -990,7 +997,7 @@ export default {
       await this.runManualAction(
         `tray:${isOpening ? "out" : "in"}`,
         `Tray ${isOpening ? "geopend" : "gesloten"}.`,
-        () => axios.post("/api/arduino/leonardo/tray", { command })
+        () => axios.post("/api/arduino/leonardo/tray", { command }, this.manualRequestConfig())
       );
     },
     trayStopDisabled() {
@@ -1009,7 +1016,7 @@ export default {
       this.manualControlSuccess = "";
 
       try {
-        await axios.post("/api/arduino/leonardo/tray", { command: "TRAY_STOP" });
+        await axios.post("/api/arduino/leonardo/tray", { command: "TRAY_STOP" }, this.manualRequestConfig());
         this.manualControlSuccess = "Tray gestopt.";
       } catch (error) {
         this.manualControlError =
@@ -1026,7 +1033,7 @@ export default {
       await this.runManualAction(
         `w${wristIndex}:${delta}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }),
+        () => axios.post(`/api/arduino/leonardo/wrist${wristIndex}/step`, { delta }, this.manualRequestConfig()),
         (data) => {
           const angle = this.parseManualStatusInt(data?.angle);
           if (angle !== null) {
@@ -1040,7 +1047,11 @@ export default {
       await this.runManualAction(
         `vac${vacuumIndex}:motor:${enabled ? "on" : "off"}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }),
+        () => axios.post(
+          `/api/arduino/leonardo/vacuum${vacuumIndex}/motor`,
+          { enabled },
+          this.manualRequestConfig()
+        ),
         () => {
           this.manualStatus[`vac${vacuumIndex}`] = enabled;
         }
@@ -1051,7 +1062,11 @@ export default {
       await this.runManualAction(
         `vac${vacuumIndex}:valve:${enabled ? "on" : "off"}`,
         label,
-        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }),
+        () => axios.post(
+          `/api/arduino/leonardo/vacuum${vacuumIndex}/valve`,
+          { enabled },
+          this.manualRequestConfig()
+        ),
         () => {
           this.manualStatus[`valve${vacuumIndex}`] = enabled;
         }
@@ -1061,7 +1076,7 @@ export default {
       await this.runManualAction(
         "stop-all",
         "Alles gestopt.",
-        () => axios.post("/api/arduino/emergency-stop-all"),
+        () => axios.post("/api/arduino/emergency-stop-all", {}, this.manualRequestConfig(7000)),
         () => {
           this.manualStatus.vac1 = false;
           this.manualStatus.vac2 = false;
