@@ -15,6 +15,7 @@ _LEONARDO_SERIAL: Optional[serial.Serial] = None
 _LEONARDO_SERIAL_PORT = ""
 _LEONARDO_SERIAL_BAUD = 0
 _WRIST_ANGLE_CACHE = {1: 90, 2: 90}
+_AUTO_OFF_TIMERS: dict[str, threading.Timer] = {}
 
 
 def _get_leonardo_port() -> str:
@@ -617,8 +618,37 @@ def _set_binary_output(
     }
 
 
+def _cancel_auto_off_timer(timer_key: str):
+    with _LEONARDO_SERIAL_LOCK:
+        timer = _AUTO_OFF_TIMERS.pop(timer_key, None)
+    if timer is not None:
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+
+def _schedule_auto_off(timer_key: str, command_off: str, delay_s: float):
+    def _run():
+        try:
+            _send_line(command_off)
+        except Exception:
+            pass
+        finally:
+            with _LEONARDO_SERIAL_LOCK:
+                _AUTO_OFF_TIMERS.pop(timer_key, None)
+
+    _cancel_auto_off_timer(timer_key)
+    timer = threading.Timer(delay_s, _run)
+    timer.daemon = True
+    with _LEONARDO_SERIAL_LOCK:
+        _AUTO_OFF_TIMERS[timer_key] = timer
+    timer.start()
+
+
 def _pulse_binary_output(
     *,
+    timer_key: str,
     command_on: str,
     command_off: str,
     done_on: str,
@@ -627,30 +657,25 @@ def _pulse_binary_output(
     raise_on_no_ack: bool = True,
 ) -> dict:
     pulse_ms = max(0, int(auto_off_ms))
-    results = _send_sequence_with_response(
-        [command_on, command_off],
-        timeout_s=0.4,
-        inter_command_delay_s=pulse_ms / 1000.0,
-    )
-    lines = _flatten_command_responses(results)
-    done = _contains_token(lines, done_on) and _contains_token(lines, done_off)
-    command = f"{command_on}->{command_off}"
-    if raise_on_no_ack:
-        return _require_done(command, done, lines) | {"auto_off_ms": pulse_ms, "pulsed": True, "results": results}
+    _send_line(command_on)
+    _schedule_auto_off(timer_key, command_off, pulse_ms / 1000.0)
     return {
-        "command": command,
+        "command": f"{command_on}->{command_off}",
         "sent": True,
-        "ack": done,
+        "ack": False,
+        "ack_skipped": True,
         "auto_off_ms": pulse_ms,
         "pulsed": True,
-        "response": lines,
-        "results": results,
+        "expected_on": done_on,
+        "expected_off": done_off,
+        "response": [],
     }
 
 
 def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: Optional[int] = None) -> dict:
     if enabled and auto_off_ms and auto_off_ms > 0:
         return _pulse_binary_output(
+            timer_key="vacuum1_motor",
             command_on="VAC1_ON",
             command_off="VAC1_OFF",
             done_on="VAC1_ON_DONE",
@@ -658,6 +683,7 @@ def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: 
             auto_off_ms=auto_off_ms,
             raise_on_no_ack=raise_on_no_ack,
         )
+    _cancel_auto_off_timer("vacuum1_motor")
     return _set_binary_output(
         command_on="VAC1_ON",
         command_off="VAC1_OFF",
@@ -671,6 +697,7 @@ def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: 
 def set_vacuum2_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: Optional[int] = None) -> dict:
     if enabled and auto_off_ms and auto_off_ms > 0:
         return _pulse_binary_output(
+            timer_key="vacuum2_motor",
             command_on="VAC2_ON",
             command_off="VAC2_OFF",
             done_on="VAC2_ON_DONE",
@@ -678,6 +705,7 @@ def set_vacuum2_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: 
             auto_off_ms=auto_off_ms,
             raise_on_no_ack=raise_on_no_ack,
         )
+    _cancel_auto_off_timer("vacuum2_motor")
     return _set_binary_output(
         command_on="VAC2_ON",
         command_off="VAC2_OFF",

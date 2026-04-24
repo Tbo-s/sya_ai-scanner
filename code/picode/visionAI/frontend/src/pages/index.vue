@@ -1048,7 +1048,12 @@ export default {
             auto_off_ms: enabled ? 2000 : null,
           }),
         (data) => {
-          this.manualStatus[`vac${vacuumIndex}`] = enabled && !data?.auto_off_ms;
+          this.manualStatus[`vac${vacuumIndex}`] = enabled;
+          if (enabled && data?.auto_off_ms) {
+            window.setTimeout(() => {
+              this.manualStatus[`vac${vacuumIndex}`] = false;
+            }, Number(data.auto_off_ms) + 100);
+          }
         }
       );
     },
