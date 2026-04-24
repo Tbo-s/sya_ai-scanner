@@ -333,7 +333,11 @@ def _flatten_command_responses(results: list[dict]) -> list[str]:
     return lines
 
 
-def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float] = None) -> list[dict]:
+def _send_sequence_with_response(
+    commands: list[str],
+    timeout_s: Optional[float] = None,
+    inter_command_delay_s: float = 0.0,
+) -> list[dict]:
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
@@ -345,7 +349,7 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
                     ser.reset_input_buffer()
 
                 results: list[dict] = []
-                for command in commands:
+                for index, command in enumerate(commands):
                     ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
                     ser.flush()
                     started_at = time.time()
@@ -358,6 +362,8 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
                         if text:
                             lines.append(text)
                     results.append({"command": command, "response": lines})
+                    if inter_command_delay_s > 0 and index < len(commands) - 1:
+                        time.sleep(inter_command_delay_s)
                 return results
 
             with serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5) as ser:
@@ -368,7 +374,7 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
                     ser.reset_input_buffer()
 
                 results: list[dict] = []
-                for command in commands:
+                for index, command in enumerate(commands):
                     ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
                     ser.flush()
                     started_at = time.time()
@@ -381,6 +387,8 @@ def _send_sequence_with_response(commands: list[str], timeout_s: Optional[float]
                         if text:
                             lines.append(text)
                     results.append({"command": command, "response": lines})
+                    if inter_command_delay_s > 0 and index < len(commands) - 1:
+                        time.sleep(inter_command_delay_s)
                 return results
     except Exception as exc:
         _close_leonardo_serial()
@@ -609,7 +617,47 @@ def _set_binary_output(
     }
 
 
-def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+def _pulse_binary_output(
+    *,
+    command_on: str,
+    command_off: str,
+    done_on: str,
+    done_off: str,
+    auto_off_ms: int,
+    raise_on_no_ack: bool = True,
+) -> dict:
+    pulse_ms = max(0, int(auto_off_ms))
+    results = _send_sequence_with_response(
+        [command_on, command_off],
+        timeout_s=0.4,
+        inter_command_delay_s=pulse_ms / 1000.0,
+    )
+    lines = _flatten_command_responses(results)
+    done = _contains_token(lines, done_on) and _contains_token(lines, done_off)
+    command = f"{command_on}->{command_off}"
+    if raise_on_no_ack:
+        return _require_done(command, done, lines) | {"auto_off_ms": pulse_ms, "pulsed": True, "results": results}
+    return {
+        "command": command,
+        "sent": True,
+        "ack": done,
+        "auto_off_ms": pulse_ms,
+        "pulsed": True,
+        "response": lines,
+        "results": results,
+    }
+
+
+def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: Optional[int] = None) -> dict:
+    if enabled and auto_off_ms and auto_off_ms > 0:
+        return _pulse_binary_output(
+            command_on="VAC1_ON",
+            command_off="VAC1_OFF",
+            done_on="VAC1_ON_DONE",
+            done_off="VAC1_OFF_DONE",
+            auto_off_ms=auto_off_ms,
+            raise_on_no_ack=raise_on_no_ack,
+        )
     return _set_binary_output(
         command_on="VAC1_ON",
         command_off="VAC1_OFF",
@@ -620,7 +668,16 @@ def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
     )
 
 
-def set_vacuum2_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
+def set_vacuum2_motor(enabled: bool, raise_on_no_ack: bool = True, auto_off_ms: Optional[int] = None) -> dict:
+    if enabled and auto_off_ms and auto_off_ms > 0:
+        return _pulse_binary_output(
+            command_on="VAC2_ON",
+            command_off="VAC2_OFF",
+            done_on="VAC2_ON_DONE",
+            done_off="VAC2_OFF_DONE",
+            auto_off_ms=auto_off_ms,
+            raise_on_no_ack=raise_on_no_ack,
+        )
     return _set_binary_output(
         command_on="VAC2_ON",
         command_off="VAC2_OFF",
