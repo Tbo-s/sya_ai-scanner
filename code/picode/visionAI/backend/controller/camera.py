@@ -18,6 +18,8 @@ PI_CAMERA_JPEG_QUALITY = 95
 PI_CAMERA_AF_TIMEOUT_S = 3.0
 PI_CAMERA_STILL_TIMEOUT_EXTRA_S = 10.0
 PI_CAMERA_FOCUS_RANGES = {"normal", "macro", "full"}
+_PI_CAMERA_FOCUS_CACHE = {"lens_position": None, "expires_at": 0.0}
+_PI_CAMERA_FOCUS_CACHE_LOCK = threading.Lock()
 
 try:
     import cv2
@@ -175,6 +177,28 @@ def _get_pi_camera_focus_settle_ms() -> int:
         return 350
 
 
+def _get_pi_camera_close_focus_sweep_enabled() -> bool:
+    return os.getenv("APP_PI_CAMERA_CLOSE_FOCUS_SWEEP", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_pi_camera_focus_cache_ttl_s() -> int:
+    try:
+        return min(3600, max(0, int(os.getenv("APP_PI_CAMERA_FOCUS_CACHE_TTL_S", "900"))))
+    except ValueError:
+        return 900
+
+
+def _get_pi_camera_focus_candidates() -> list[float]:
+    raw = os.getenv("APP_PI_CAMERA_FOCUS_CANDIDATES", "4.0,4.5,5.0,5.5,6.0").strip()
+    candidates: list[float] = []
+    for part in raw.split(","):
+        try:
+            candidates.append(max(0.0, float(part.strip())))
+        except ValueError:
+            continue
+    return candidates or [4.0, 4.5, 5.0, 5.5, 6.0]
+
+
 def _safe_filename_part(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
     return normalized or fallback
@@ -197,28 +221,93 @@ def _wait_for_picamera_job(picam2, job) -> None:
             job.wait()
 
 
+def _clamp_lens_position_for_camera(picam2, lens_position: float) -> float:
+    try:
+        lens_control = getattr(picam2, "camera_controls", {}).get("LensPosition")
+        if lens_control and len(lens_control) >= 2:
+            min_lens = float(lens_control[0])
+            max_lens = float(lens_control[1])
+            return max(min_lens, min(max_lens, lens_position))
+    except Exception:
+        pass
+    return lens_position
+
+
+def _set_manual_lens_position(picam2, controls_module, lens_position: float) -> float:
+    resolved_lens_position = _clamp_lens_position_for_camera(picam2, lens_position)
+    picam2.set_controls(
+        {
+            "AfMode": controls_module.AfModeEnum.Manual,
+            "LensPosition": resolved_lens_position,
+        }
+    )
+    settle_ms = _get_pi_camera_focus_settle_ms()
+    if settle_ms > 0:
+        time.sleep(settle_ms / 1000.0)
+    return resolved_lens_position
+
+
+def _score_focus_frame(frame) -> float:
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    height, width = gray.shape[:2]
+    crop_height = max(32, int(height * 0.5))
+    crop_width = max(32, int(width * 0.5))
+    start_y = max(0, (height - crop_height) // 2)
+    start_x = max(0, (width - crop_width) // 2)
+    crop = gray[start_y:start_y + crop_height, start_x:start_x + crop_width]
+    return float(cv2.Laplacian(crop, cv2.CV_64F).var())
+
+
+def _get_cached_focus_lens_position() -> Optional[float]:
+    with _PI_CAMERA_FOCUS_CACHE_LOCK:
+        lens_position = _PI_CAMERA_FOCUS_CACHE.get("lens_position")
+        expires_at = float(_PI_CAMERA_FOCUS_CACHE.get("expires_at", 0.0) or 0.0)
+        if lens_position is None or time.time() >= expires_at:
+            return None
+        return float(lens_position)
+
+
+def _set_cached_focus_lens_position(lens_position: float) -> None:
+    ttl_s = _get_pi_camera_focus_cache_ttl_s()
+    with _PI_CAMERA_FOCUS_CACHE_LOCK:
+        _PI_CAMERA_FOCUS_CACHE["lens_position"] = float(lens_position)
+        _PI_CAMERA_FOCUS_CACHE["expires_at"] = time.time() + ttl_s if ttl_s > 0 else 0.0
+
+
+def _capture_pi_frame_with_close_focus_tuning(picam2, controls_module):
+    cached_lens_position = _get_cached_focus_lens_position()
+    if cached_lens_position is not None:
+        _set_manual_lens_position(picam2, controls_module, cached_lens_position)
+        return picam2.capture_array("main")
+
+    best_score = -1.0
+    best_frame = None
+    best_lens_position = None
+    for lens_position in _get_pi_camera_focus_candidates():
+        try:
+            resolved_lens_position = _set_manual_lens_position(picam2, controls_module, lens_position)
+            frame = picam2.capture_array("main")
+            score = _score_focus_frame(frame)
+        except Exception:
+            continue
+        if score > best_score:
+            best_score = score
+            best_frame = frame
+            best_lens_position = resolved_lens_position
+
+    if best_frame is not None and best_lens_position is not None:
+        _set_cached_focus_lens_position(best_lens_position)
+        return best_frame
+
+    _run_pi_autofocus_cycle(picam2, controls_module)
+    return picam2.capture_array("main")
+
+
 def _run_pi_autofocus_cycle(picam2, controls_module) -> None:
     manual_lens_position = _get_pi_camera_lens_position()
     if manual_lens_position is not None:
         try:
-            lens_control = getattr(picam2, "camera_controls", {}).get("LensPosition")
-            if lens_control and len(lens_control) >= 2:
-                min_lens = float(lens_control[0])
-                max_lens = float(lens_control[1])
-                manual_lens_position = max(min_lens, min(max_lens, manual_lens_position))
-        except Exception:
-            pass
-
-        try:
-            picam2.set_controls(
-                {
-                    "AfMode": controls_module.AfModeEnum.Manual,
-                    "LensPosition": manual_lens_position,
-                }
-            )
-            settle_ms = _get_pi_camera_focus_settle_ms()
-            if settle_ms > 0:
-                time.sleep(settle_ms / 1000.0)
+            _set_manual_lens_position(picam2, controls_module, manual_lens_position)
             return
         except Exception:
             pass
@@ -287,6 +376,9 @@ def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
         picam2.start()
         if warmup_ms > 0:
             time.sleep(warmup_ms / 1000.0)
+
+        if _get_pi_camera_close_focus_sweep_enabled():
+            return _capture_pi_frame_with_close_focus_tuning(picam2, controls)
 
         _run_pi_autofocus_cycle(picam2, controls)
         return picam2.capture_array("main")
