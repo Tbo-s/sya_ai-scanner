@@ -57,10 +57,6 @@ def _get_leonardo_poll_status_timeout_s() -> float:
     return max(0.05, float(os.getenv("APP_LEONARDO_POLL_STATUS_TIMEOUT_S", "0.1")))
 
 
-def _get_leonardo_command_timeout_s() -> float:
-    return max(0.2, float(os.getenv("APP_LEONARDO_COMMAND_TIMEOUT_S", "1.2")))
-
-
 def _get_wrist_dwell_ms() -> int:
     return int(os.getenv("APP_WRIST_DWELL_MS", "600"))
 
@@ -475,25 +471,6 @@ def _require_done(command: str, ack: bool, response: list[str]) -> dict:
     return {"command": command, "sent": True, "ack": True, "response": response}
 
 
-def _send_immediate_command(
-    command: str,
-    expected_tokens: tuple[str, ...],
-    *,
-    timeout_s: Optional[float] = None,
-    raise_on_no_ack: bool = True,
-) -> dict:
-    lines = _send_with_response(
-        command,
-        timeout_s=_get_leonardo_command_timeout_s() if timeout_s is None else timeout_s,
-        stop_when=lambda line: any(token in line for token in expected_tokens),
-        open_delay_s=_get_leonardo_command_open_delay_s(),
-    )
-    done = any(any(token in line for token in expected_tokens) for line in lines)
-    if raise_on_no_ack:
-        return _require_done(command, done, lines)
-    return {"command": command, "sent": True, "ack": done, "response": lines, "expected": list(expected_tokens)}
-
-
 def _get_wrist_current_angle(status_key: str) -> Optional[int]:
     try:
         values, _ = _get_status_values()
@@ -503,23 +480,28 @@ def _get_wrist_current_angle(status_key: str) -> Optional[int]:
 
 
 def open_gate() -> dict:
-    return _send_immediate_command("GATE_OPEN", ("GATE_OPENING",))
+    _send_line("GATE_OPEN")
+    return {"command": "GATE_OPEN", "sent": True}
 
 
 def close_gate() -> dict:
-    return _send_immediate_command("GATE_CLOSE", ("GATE_CLOSING",))
+    _send_line("GATE_CLOSE")
+    return {"command": "GATE_CLOSE", "sent": True}
 
 
 def tray_out() -> dict:
-    return _send_immediate_command("TRAY_OUT", ("TRAY_MOVING_OUT",))
+    _send_line("TRAY_OUT")
+    return {"command": "TRAY_OUT", "sent": True}
 
 
 def tray_in() -> dict:
-    return _send_immediate_command("TRAY_IN", ("TRAY_MOVING_IN",))
+    _send_line("TRAY_IN")
+    return {"command": "TRAY_IN", "sent": True}
 
 
 def tray_stop() -> dict:
-    return _send_immediate_command("TRAY_STOP", ("TRAY_STOPPED",))
+    _send_line("TRAY_STOP")
+    return {"command": "TRAY_STOP", "sent": True}
 
 
 def get_gate_position() -> dict:
@@ -582,7 +564,8 @@ def home_machine() -> dict:
 
 
 def emergency_stop() -> dict:
-    return _send_immediate_command("STOP_ALL", ("ALL_STOPPED",), timeout_s=max(0.4, _get_leonardo_command_timeout_s()))
+    _send_line("STOP_ALL")
+    return {"command": "STOP_ALL", "sent": True}
 
 
 def vacuum_on(raise_on_no_ack: bool = True) -> dict:
@@ -614,13 +597,16 @@ def _set_binary_output(
 ) -> dict:
     command = command_on if enabled else command_off
     expected = done_on if enabled else done_off
-    result = _send_immediate_command(
-        command,
-        (expected,),
-        timeout_s=max(0.4, _get_leonardo_command_timeout_s()),
-        raise_on_no_ack=raise_on_no_ack,
-    )
-    return result | {"expected": expected, "enabled": enabled}
+    _send_line(command)
+    return {
+        "command": command,
+        "sent": True,
+        "ack": False,
+        "ack_skipped": True,
+        "expected": expected,
+        "enabled": enabled,
+        "response": [],
+    }
 
 
 def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:
@@ -866,7 +852,8 @@ def read_distance() -> dict:
 
 
 def tray_to_gate_position() -> dict:
-    return _send_immediate_command("TRAY_OUT", ("TRAY_MOVING_OUT",))
+    _send_line("TRAY_OUT")
+    return {"command": "TRAY_OUT", "sent": True}
 
 
 def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
