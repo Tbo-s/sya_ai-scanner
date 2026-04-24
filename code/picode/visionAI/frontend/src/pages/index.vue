@@ -1,5 +1,5 @@
 <template>
-  <v-container id="home-page" class="page-container">
+  <v-container class="page-container">
     <v-btn
       v-if="showBackButton"
       icon="mdi-arrow-left"
@@ -1036,24 +1036,13 @@ export default {
       );
     },
     async setVacuumMotor(vacuumIndex, enabled) {
-      const label = enabled
-        ? `Vacuum motor ${vacuumIndex} 2 seconden ingeschakeld.`
-        : `Vacuum motor ${vacuumIndex} uitgeschakeld.`;
+      const label = `Vacuum motor ${vacuumIndex} ${enabled ? "ingeschakeld" : "uitgeschakeld"}.`;
       await this.runManualAction(
         `vac${vacuumIndex}:motor:${enabled ? "on" : "off"}`,
         label,
-        () =>
-          axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, {
-            enabled,
-            auto_off_ms: enabled ? 2000 : null,
-          }),
-        (data) => {
+        () => axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }),
+        () => {
           this.manualStatus[`vac${vacuumIndex}`] = enabled;
-          if (enabled && data?.auto_off_ms) {
-            window.setTimeout(() => {
-              this.manualStatus[`vac${vacuumIndex}`] = false;
-            }, Number(data.auto_off_ms) + 100);
-          }
         }
       );
     },

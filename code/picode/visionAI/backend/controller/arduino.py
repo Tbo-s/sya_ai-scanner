@@ -66,7 +66,6 @@ class AngleDeltaCommand(BaseModel):
 
 class ToggleState(BaseModel):
     enabled: bool
-    auto_off_ms: Optional[int] = Field(default=None, ge=0, le=10000)
 
 
 class ZJogCommand(BaseModel):
@@ -345,7 +344,7 @@ def step_leonardo_wrist2(payload: AngleDeltaCommand):
 
 @router.post("/arduino/leonardo/vacuum1/motor", tags=["Arduino"])
 def set_leonardo_vacuum1_motor(payload: ToggleState):
-    return machine_set_vacuum1_motor(payload.enabled, auto_off_ms=payload.auto_off_ms)
+    return machine_set_vacuum1_motor(payload.enabled)
 
 
 @router.post("/arduino/leonardo/vacuum1/valve", tags=["Arduino"])
@@ -355,7 +354,7 @@ def set_leonardo_vacuum1_valve(payload: ToggleState):
 
 @router.post("/arduino/leonardo/vacuum2/motor", tags=["Arduino"])
 def set_leonardo_vacuum2_motor(payload: ToggleState):
-    return machine_set_vacuum2_motor(payload.enabled, auto_off_ms=payload.auto_off_ms)
+    return machine_set_vacuum2_motor(payload.enabled)
 
 
 @router.post("/arduino/leonardo/vacuum2/valve", tags=["Arduino"])
