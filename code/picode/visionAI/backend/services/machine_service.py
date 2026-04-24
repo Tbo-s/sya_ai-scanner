@@ -41,6 +41,10 @@ def _get_leonardo_post_write_hold_s() -> float:
     return max(0.0, float(os.getenv("APP_LEONARDO_POST_WRITE_HOLD_S", "0.25")))
 
 
+def _get_leonardo_write_retry_delay_s() -> float:
+    return max(0.0, float(os.getenv("APP_LEONARDO_WRITE_RETRY_DELAY_S", "0.35")))
+
+
 def _use_persistent_leonardo_serial() -> bool:
     return os.getenv("APP_LEONARDO_PERSISTENT_SERIAL", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -105,6 +109,27 @@ def _close_leonardo_serial():
     _LEONARDO_SERIAL_BAUD = 0
 
 
+def _reset_serial_buffers(ser: serial.Serial):
+    if hasattr(ser, "reset_input_buffer"):
+        ser.reset_input_buffer()
+    if hasattr(ser, "reset_output_buffer"):
+        try:
+            ser.reset_output_buffer()
+        except Exception:
+            pass
+
+
+def _write_serial_line(ser: serial.Serial, line: str):
+    ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
+    ser.flush()
+
+
+def _is_serial_write_timeout(exc: Exception) -> bool:
+    if isinstance(exc, serial.SerialTimeoutException):
+        return True
+    return "write timeout" in str(exc).strip().lower()
+
+
 def _get_leonardo_serial() -> serial.Serial:
     global _LEONARDO_SERIAL, _LEONARDO_SERIAL_PORT, _LEONARDO_SERIAL_BAUD
 
@@ -126,8 +151,7 @@ def _get_leonardo_serial() -> serial.Serial:
     open_delay_s = _get_leonardo_open_delay_s()
     if open_delay_s > 0:
         time.sleep(open_delay_s)
-    if hasattr(_LEONARDO_SERIAL, "reset_input_buffer"):
-        _LEONARDO_SERIAL.reset_input_buffer()
+    _reset_serial_buffers(_LEONARDO_SERIAL)
 
     return _LEONARDO_SERIAL
 
@@ -152,34 +176,45 @@ def warm_up() -> dict:
 def _send_line(line: str):
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
-    try:
-        with _LEONARDO_SERIAL_LOCK:
-            if _use_persistent_leonardo_serial():
-                ser = _get_leonardo_serial()
-                ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
-                ser.flush()
-                hold_s = _get_leonardo_post_write_hold_s()
-                if hold_s > 0:
-                    time.sleep(hold_s)
-                return
+    last_exc: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            with _LEONARDO_SERIAL_LOCK:
+                if _use_persistent_leonardo_serial():
+                    ser = _get_leonardo_serial()
+                    _write_serial_line(ser, line)
+                    hold_s = _get_leonardo_post_write_hold_s()
+                    if hold_s > 0:
+                        time.sleep(hold_s)
+                    return
 
-            with serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5) as ser:
-                open_delay_s = _get_leonardo_command_open_delay_s()
-                if open_delay_s > 0:
-                    time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
-                ser.write((line.strip() + "\n").encode("ascii", errors="ignore"))
-                ser.flush()
-                hold_s = _get_leonardo_post_write_hold_s()
-                if hold_s > 0:
-                    time.sleep(hold_s)
-    except Exception as exc:
-        _close_leonardo_serial()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to talk to serial device on {port}: {exc}",
-        ) from exc
+                with serial.Serial(port, baudrate, timeout=0.2) as ser:
+                    open_delay_s = _get_leonardo_command_open_delay_s()
+                    if open_delay_s > 0:
+                        time.sleep(open_delay_s)
+                    _reset_serial_buffers(ser)
+                    _write_serial_line(ser, line)
+                    hold_s = _get_leonardo_post_write_hold_s()
+                    if hold_s > 0:
+                        time.sleep(hold_s)
+                    return
+        except Exception as exc:
+            last_exc = exc
+            _close_leonardo_serial()
+            if attempt == 0 and _is_serial_write_timeout(exc):
+                retry_delay_s = _get_leonardo_write_retry_delay_s()
+                if retry_delay_s > 0:
+                    time.sleep(retry_delay_s)
+                continue
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to talk to serial device on {port}: {exc}",
+            ) from exc
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"Failed to talk to serial device on {port}: {last_exc or 'unknown error'}",
+    )
 
 
 def _send_with_response(
@@ -191,53 +226,62 @@ def _send_with_response(
     port = _get_leonardo_port()
     baudrate = _get_leonardo_baud()
     read_timeout_s = timeout_s if timeout_s is not None else _get_leonardo_read_timeout_s()
-    try:
-        with _LEONARDO_SERIAL_LOCK:
-            if _use_persistent_leonardo_serial():
-                ser = _get_leonardo_serial()
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
-                ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                ser.flush()
-                started_at = time.time()
-                lines: list[str] = []
-                while time.time() - started_at < read_timeout_s:
-                    raw = ser.readline()
-                    if not raw:
-                        continue
-                    text = raw.decode("utf-8", errors="ignore").strip()
-                    if text:
-                        lines.append(text)
-                        if stop_when is not None and stop_when(text):
-                            return lines
-                return lines
+    last_exc: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            with _LEONARDO_SERIAL_LOCK:
+                if _use_persistent_leonardo_serial():
+                    ser = _get_leonardo_serial()
+                    _reset_serial_buffers(ser)
+                    _write_serial_line(ser, command)
+                    started_at = time.time()
+                    lines: list[str] = []
+                    while time.time() - started_at < read_timeout_s:
+                        raw = ser.readline()
+                        if not raw:
+                            continue
+                        text = raw.decode("utf-8", errors="ignore").strip()
+                        if text:
+                            lines.append(text)
+                            if stop_when is not None and stop_when(text):
+                                return lines
+                    return lines
 
-            with serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5) as ser:
-                delay_s = _get_leonardo_open_delay_s() if open_delay_s is None else open_delay_s
-                if delay_s > 0:
-                    time.sleep(delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
-                ser.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                ser.flush()
-                started_at = time.time()
-                lines: list[str] = []
-                while time.time() - started_at < read_timeout_s:
-                    raw = ser.readline()
-                    if not raw:
-                        continue
-                    text = raw.decode("utf-8", errors="ignore").strip()
-                    if text:
-                        lines.append(text)
-                        if stop_when is not None and stop_when(text):
-                            return lines
-                return lines
-    except Exception as exc:
-        _close_leonardo_serial()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to talk to serial device on {port}: {exc}",
-        ) from exc
+                with serial.Serial(port, baudrate, timeout=0.2) as ser:
+                    delay_s = _get_leonardo_open_delay_s() if open_delay_s is None else open_delay_s
+                    if delay_s > 0:
+                        time.sleep(delay_s)
+                    _reset_serial_buffers(ser)
+                    _write_serial_line(ser, command)
+                    started_at = time.time()
+                    lines: list[str] = []
+                    while time.time() - started_at < read_timeout_s:
+                        raw = ser.readline()
+                        if not raw:
+                            continue
+                        text = raw.decode("utf-8", errors="ignore").strip()
+                        if text:
+                            lines.append(text)
+                            if stop_when is not None and stop_when(text):
+                                return lines
+                    return lines
+        except Exception as exc:
+            last_exc = exc
+            _close_leonardo_serial()
+            if attempt == 0 and _is_serial_write_timeout(exc):
+                retry_delay_s = _get_leonardo_write_retry_delay_s()
+                if retry_delay_s > 0:
+                    time.sleep(retry_delay_s)
+                continue
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to talk to serial device on {port}: {exc}",
+            ) from exc
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"Failed to talk to serial device on {port}: {last_exc or 'unknown error'}",
+    )
 
 
 def _extract_gate_position(lines: list[str]) -> Optional[str]:
@@ -366,12 +410,11 @@ def _send_sequence_with_response(
                         time.sleep(inter_command_delay_s)
                 return results
 
-            with serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5) as ser:
+            with serial.Serial(port, baudrate, timeout=0.2) as ser:
                 open_delay_s = _get_leonardo_open_delay_s()
                 if open_delay_s > 0:
                     time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
+                _reset_serial_buffers(ser)
 
                 results: list[dict] = []
                 for index, command in enumerate(commands):
@@ -767,15 +810,14 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
             if _use_persistent_leonardo_serial():
                 ser = _get_leonardo_serial()
             else:
-                ser = serial.Serial(port, baudrate, timeout=0.2, write_timeout=0.5)
+                ser = serial.Serial(port, baudrate, timeout=0.2)
 
             try:
                 if not _use_persistent_leonardo_serial():
                     open_delay_s = _get_leonardo_open_delay_s()
                     if open_delay_s > 0:
                         time.sleep(open_delay_s)
-                if hasattr(ser, "reset_input_buffer"):
-                    ser.reset_input_buffer()
+                _reset_serial_buffers(ser)
 
                 results: list[dict] = []
                 for index, angle in enumerate(angles):
