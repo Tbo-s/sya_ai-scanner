@@ -15,6 +15,9 @@ _LEONARDO_SERIAL: Optional[serial.Serial] = None
 _LEONARDO_SERIAL_PORT = ""
 _LEONARDO_SERIAL_BAUD = 0
 _WRIST_ANGLE_CACHE = {1: 90, 2: 90}
+_LAST_STATUS_VALUES: dict[str, str] = {}
+_LAST_STATUS_RESPONSE: list[str] = []
+_LAST_STATUS_AT = 0.0
 
 
 def _get_leonardo_port() -> str:
@@ -373,6 +376,29 @@ def _update_cached_state(values: dict[str, str]):
             pass
 
 
+def _cache_status_values(values: dict[str, str], lines: list[str]):
+    global _LAST_STATUS_VALUES, _LAST_STATUS_RESPONSE, _LAST_STATUS_AT
+    _LAST_STATUS_VALUES = dict(values)
+    _LAST_STATUS_RESPONSE = list(lines[-20:])
+    _LAST_STATUS_AT = time.time()
+
+
+def _cached_status_payload(*, lines: Optional[list[str]] = None, lock_busy: bool = False, stale: bool = False) -> dict:
+    age_ms: Optional[int] = None
+    if _LAST_STATUS_AT > 0:
+        age_ms = max(0, int((time.time() - _LAST_STATUS_AT) * 1000))
+    return {
+        "command": "STATUS",
+        "found": bool(_LAST_STATUS_VALUES),
+        "status": dict(_LAST_STATUS_VALUES),
+        "response": list(lines if lines is not None else _LAST_STATUS_RESPONSE),
+        "cached": bool(_LAST_STATUS_VALUES),
+        "lock_busy": lock_busy,
+        "stale": stale,
+        "cache_age_ms": age_ms,
+    }
+
+
 def _format_status_attempts_for_error(attempts: list[dict]) -> str:
     if not attempts:
         return "no response"
@@ -521,6 +547,7 @@ def _get_status_values(
             if status_line:
                 values = _normalize_status_values(_parse_status_values(status_line))
                 _update_cached_state(values)
+                _cache_status_values(values, all_lines)
                 return values, all_lines
 
             if attempt < max_retries:
@@ -629,16 +656,43 @@ def get_tray_position() -> dict:
 
 
 def get_status() -> dict:
-    values, lines = _get_status_values(
-        timeout_s=_get_leonardo_poll_status_timeout_s(),
-        retries=1,
-        raise_on_missing=False,
-    )
+    acquired = _LEONARDO_SERIAL_LOCK.acquire(blocking=False)
+    if not acquired:
+        return _cached_status_payload(lock_busy=True, stale=True)
+
+    try:
+        values, lines = _get_status_values(
+            timeout_s=_get_leonardo_poll_status_timeout_s(),
+            retries=1,
+            raise_on_missing=False,
+        )
+    finally:
+        _LEONARDO_SERIAL_LOCK.release()
+
+    if values:
+        return {
+            "command": "STATUS",
+            "found": True,
+            "status": values,
+            "response": lines,
+            "cached": False,
+            "lock_busy": False,
+            "stale": False,
+            "cache_age_ms": 0,
+        }
+
+    if _LAST_STATUS_VALUES:
+        return _cached_status_payload(lines=lines, stale=True)
+
     return {
         "command": "STATUS",
-        "found": bool(values),
-        "status": values,
+        "found": False,
+        "status": {},
         "response": lines,
+        "cached": False,
+        "lock_busy": False,
+        "stale": True,
+        "cache_age_ms": None,
     }
 
 

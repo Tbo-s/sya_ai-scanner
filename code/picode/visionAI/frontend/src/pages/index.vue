@@ -839,7 +839,7 @@ export default {
         if (this.step === 0 && !this.manualControlBusy) {
           this.fetchManualStatus();
         }
-      }, 1000);
+      }, 2500);
     },
     stopManualStatusPolling() {
       if (this.manualStatusTimer) {
