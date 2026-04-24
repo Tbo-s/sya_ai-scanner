@@ -8,8 +8,8 @@ from fastapi import HTTPException
 import serial  # type: ignore
 
 
-GATE_POSITION_PATTERN = re.compile(r"^GATE_POS=(UP|DOWN|UNKNOWN)$")
-STATUS_LINE_PATTERN = re.compile(r"^gateState=.*\btrayInSw=\d+\s*$")
+GATE_POSITION_PATTERN = re.compile(r"^(?:ACK:)?GATE_POS=(UP|DOWN|UNKNOWN)$")
+STATUS_LINE_PATTERN = re.compile(r"^(?:ACK:STATUS,)?gateState=.*\btrayInSw=\d+\s*$")
 _LEONARDO_SERIAL_LOCK = threading.RLock()
 _LEONARDO_SERIAL: Optional[serial.Serial] = None
 _LEONARDO_SERIAL_PORT = ""
@@ -326,10 +326,22 @@ def _extract_gate_position(lines: list[str]) -> Optional[str]:
     return None
 
 
+def _status_payload_from_line(line: str) -> Optional[str]:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("ACK:STATUS,"):
+        return stripped[len("ACK:STATUS,") :]
+    if STATUS_LINE_PATTERN.match(stripped):
+        return stripped
+    return None
+
+
 def _extract_status_line(lines: list[str]) -> Optional[str]:
     for line in reversed(lines):
-        if STATUS_LINE_PATTERN.match(line.strip()):
-            return line.strip()
+        payload = _status_payload_from_line(line)
+        if payload is not None:
+            return payload
     return None
 
 
@@ -427,6 +439,10 @@ def _contains_token(lines: list[str], token: str) -> bool:
     return any(token in line for line in lines)
 
 
+def _contains_any_token(lines: list[str], tokens: tuple[str, ...]) -> bool:
+    return any(any(token in line for token in tokens) for line in lines)
+
+
 def _flatten_command_responses(results: list[dict]) -> list[str]:
     lines: list[str] = []
     for result in results:
@@ -461,6 +477,7 @@ def _send_sequence_with_response(
                         text = raw.decode("utf-8", errors="ignore").strip()
                         if text:
                             lines.append(text)
+                            break
                     results.append({"command": command, "response": lines})
                     if inter_command_delay_s > 0 and index < len(commands) - 1:
                         time.sleep(inter_command_delay_s)
@@ -486,6 +503,7 @@ def _send_sequence_with_response(
                         text = raw.decode("utf-8", errors="ignore").strip()
                         if text:
                             lines.append(text)
+                            break
                     results.append({"command": command, "response": lines})
                     if inter_command_delay_s > 0 and index < len(commands) - 1:
                         time.sleep(inter_command_delay_s)
@@ -579,6 +597,13 @@ def _require_done(command: str, ack: bool, response: list[str]) -> dict:
     if not ack:
         raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
     return {"command": command, "sent": True, "ack": True, "response": response}
+
+
+def _wrist_expected_tokens(wrist_index: int, angle: int) -> tuple[str, ...]:
+    return (
+        f"WRIST{wrist_index}_DONE:{angle}",
+        f"ACK:WRIST{wrist_index}_ANGLE={angle}",
+    )
 
 
 def _get_wrist_current_angle(status_key: str) -> Optional[int]:
@@ -708,7 +733,9 @@ def emergency_stop() -> dict:
 def vacuum_on(raise_on_no_ack: bool = True) -> dict:
     results = _send_sequence_with_response(["VAC_ALL_ON", "VALVE_ALL_ON"], timeout_s=0.4)
     lines = _flatten_command_responses(results)
-    done = _contains_token(lines, "VAC_ALL_ON_DONE") and _contains_token(lines, "VALVE_ALL_ON_DONE")
+    done = _contains_any_token(lines, ("VAC_ALL_ON_DONE", "ACK:VAC_ALL_ON")) and _contains_any_token(
+        lines, ("VALVE_ALL_ON_DONE", "ACK:VALVE_ALL_ON")
+    )
     if raise_on_no_ack:
         return _require_done("VAC_ALL_ON+VALVE_ALL_ON", done, lines) | {"results": results}
     return {"command": "VAC_ALL_ON+VALVE_ALL_ON", "sent": True, "ack": done, "response": lines, "results": results}
@@ -717,7 +744,9 @@ def vacuum_on(raise_on_no_ack: bool = True) -> dict:
 def vacuum_off(raise_on_no_ack: bool = True) -> dict:
     results = _send_sequence_with_response(["VAC_ALL_OFF", "VALVE_ALL_OFF"], timeout_s=0.4)
     lines = _flatten_command_responses(results)
-    done = _contains_token(lines, "VAC_ALL_OFF_DONE") and _contains_token(lines, "VALVE_ALL_OFF_DONE")
+    done = _contains_any_token(lines, ("VAC_ALL_OFF_DONE", "ACK:VAC_ALL_OFF")) and _contains_any_token(
+        lines, ("VALVE_ALL_OFF_DONE", "ACK:VALVE_ALL_OFF")
+    )
     if raise_on_no_ack:
         return _require_done("VAC_ALL_OFF+VALVE_ALL_OFF", done, lines) | {"results": results}
     return {"command": "VAC_ALL_OFF+VALVE_ALL_OFF", "sent": True, "ack": done, "response": lines, "results": results}
@@ -792,10 +821,13 @@ def set_valve2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
 
 def set_vacuum1(enabled: bool, raise_on_no_ack: bool = True) -> dict:
     commands = ["VAC1_ON", "VALVE1_ON"] if enabled else ["VAC1_OFF", "VALVE1_OFF"]
-    expected = ["VAC1_ON_DONE", "VALVE1_ON_DONE"] if enabled else ["VAC1_OFF_DONE", "VALVE1_OFF_DONE"]
+    expected = [("VAC1_ON_DONE", "ACK:VAC1_ON"), ("VALVE1_ON_DONE", "ACK:VALVE1_ON")] if enabled else [
+        ("VAC1_OFF_DONE", "ACK:VAC1_OFF"),
+        ("VALVE1_OFF_DONE", "ACK:VALVE1_OFF"),
+    ]
     results = _send_sequence_with_response(commands, timeout_s=0.4)
     lines = _flatten_command_responses(results)
-    done = all(_contains_token(lines, token) for token in expected)
+    done = all(_contains_any_token(lines, tokens) for tokens in expected)
     command = "+".join(commands)
     if raise_on_no_ack:
         return _require_done(command, done, lines) | {"enabled": enabled, "results": results}
@@ -804,10 +836,13 @@ def set_vacuum1(enabled: bool, raise_on_no_ack: bool = True) -> dict:
 
 def set_vacuum2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
     commands = ["VAC2_ON", "VALVE2_ON"] if enabled else ["VAC2_OFF", "VALVE2_OFF"]
-    expected = ["VAC2_ON_DONE", "VALVE2_ON_DONE"] if enabled else ["VAC2_OFF_DONE", "VALVE2_OFF_DONE"]
+    expected = [("VAC2_ON_DONE", "ACK:VAC2_ON"), ("VALVE2_ON_DONE", "ACK:VALVE2_ON")] if enabled else [
+        ("VAC2_OFF_DONE", "ACK:VAC2_OFF"),
+        ("VALVE2_OFF_DONE", "ACK:VALVE2_OFF"),
+    ]
     results = _send_sequence_with_response(commands, timeout_s=0.4)
     lines = _flatten_command_responses(results)
-    done = all(_contains_token(lines, token) for token in expected)
+    done = all(_contains_any_token(lines, tokens) for tokens in expected)
     command = "+".join(commands)
     if raise_on_no_ack:
         return _require_done(command, done, lines) | {"enabled": enabled, "results": results}
@@ -831,14 +866,14 @@ def set_wrist2(angle: int) -> dict:
 def _move_wrist_fast(wrist_index: int, target_angle: int, current_angle: int) -> dict:
     target_angle = _clamp_wrist_angle(target_angle)
     command = f"WRIST{wrist_index}_ANGLE:{target_angle}"
-    expected = f"WRIST{wrist_index}_DONE:{target_angle}"
+    expected_tokens = _wrist_expected_tokens(wrist_index, target_angle)
     lines = _send_with_response(
         command,
         timeout_s=0.6,
-        stop_when=lambda line: expected in line,
+        stop_when=lambda line: any(token in line for token in expected_tokens),
         open_delay_s=_get_leonardo_command_open_delay_s(),
     )
-    done = any(expected in line for line in lines)
+    done = _contains_any_token(lines, expected_tokens)
     _WRIST_ANGLE_CACHE[wrist_index] = target_angle
     return _require_done(command, done, lines) | {
         "angle": target_angle,
@@ -850,15 +885,15 @@ def _move_wrist_fast(wrist_index: int, target_angle: int, current_angle: int) ->
 def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optional[int]) -> dict:
     target_angle = _clamp_wrist_angle(target_angle)
     command_prefix = f"WRIST{wrist_index}_ANGLE:"
-    done_prefix = f"WRIST{wrist_index}_DONE:"
 
     if current_angle is None:
+        expected_tokens = _wrist_expected_tokens(wrist_index, target_angle)
         lines = _send_with_response(
             f"{command_prefix}{target_angle}",
-            stop_when=lambda line: f"{done_prefix}{target_angle}" in line,
+            stop_when=lambda line: any(token in line for token in expected_tokens),
             open_delay_s=_get_leonardo_command_open_delay_s(),
         )
-        done = any(f"{done_prefix}{target_angle}" in line for line in lines)
+        done = _contains_any_token(lines, expected_tokens)
         time.sleep(_get_wrist_dwell_ms() / 1000.0)
         return _require_done(f"{command_prefix}{target_angle}", done, lines) | {"angle": target_angle, "smoothed": False}
 
@@ -909,8 +944,9 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
                 results: list[dict] = []
                 for index, angle in enumerate(angles):
                     command = f"{command_prefix}{angle}"
-                    lines = _send_command_until_token(ser, command, (f"{done_prefix}{angle}",))
-                    done = any(f"{done_prefix}{angle}" in line for line in lines)
+                    expected_tokens = _wrist_expected_tokens(wrist_index, angle)
+                    lines = _send_command_until_token(ser, command, expected_tokens)
+                    done = _contains_any_token(lines, expected_tokens)
                     if not done:
                         raise HTTPException(status_code=504, detail=f"{command} did not acknowledge before timeout.")
                     results.append({"command": command, "response": lines})
@@ -960,9 +996,27 @@ def wrist_home() -> dict:
 def read_distance() -> dict:
     lines = _send_with_response(
         "DISTANCE_MM",
-        stop_when=lambda line: line.startswith("DISTANCE_MM=") or line.startswith("DIST="),
+        stop_when=lambda line: (
+            line.startswith("DISTANCE_MM=")
+            or line.startswith("DIST=")
+            or line.startswith("ACK:DISTANCE_MM=")
+        ),
     )
     for line in lines:
+        if line.startswith("ACK:DISTANCE_MM="):
+            raw_value = line.split("=", 1)[1].strip()
+            if raw_value == "ERROR":
+                return {"distance_mm": -1, "distance_cm": -1, "found": False, "response": lines}
+            try:
+                distance_mm = int(raw_value)
+                return {
+                    "distance_mm": distance_mm,
+                    "distance_cm": distance_mm / 10.0,
+                    "found": True,
+                    "response": lines,
+                }
+            except ValueError:
+                pass
         if line.startswith("DISTANCE_MM="):
             try:
                 distance_mm = int(line.split("=", 1)[1].strip())
@@ -996,44 +1050,54 @@ def tray_to_gate_position() -> dict:
 def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_GATE_MOVE_TIMEOUT_S", "10"))
-    port = _get_leonardo_port()
-    try:
-        with _LEONARDO_SERIAL_LOCK:
-            ser = _get_leonardo_serial()
-            started = time.time()
-            while time.time() - started < timeout_s:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                text = raw.decode("utf-8", errors="ignore").strip()
-                if "GATE_OPEN_DONE" in text or "GATE_CLOSE_DONE" in text:
-                    return {"done": True, "response": text}
-            raise HTTPException(status_code=504, detail="Gate movement timed out.")
-    except Exception as exc:
-        if isinstance(exc, HTTPException):
-            raise
-        _close_leonardo_serial()
-        raise HTTPException(status_code=500, detail=f"wait_for_gate_done error: {exc}") from exc
+    started = time.time()
+    saw_motion = False
+    last_values: dict[str, str] = {}
+    last_lines: list[str] = []
+
+    while time.time() - started < timeout_s:
+        values, lines = _get_status_values(timeout_s=0.25, retries=1, raise_on_missing=False)
+        if lines:
+            last_lines = lines
+        if values:
+            last_values = values
+            gate_state = _get_status_int(values, "gateState", -1)
+            gate_pos = str(values.get("gatePos", "")).upper()
+            if gate_state not in {-1, 0}:
+                saw_motion = True
+            if gate_state == 0 and gate_pos in {"UP", "DOWN"} and (saw_motion or time.time() - started >= 0.25):
+                return {"done": True, "status": values, "response": last_lines}
+        time.sleep(0.05)
+
+    raise HTTPException(
+        status_code=504,
+        detail=f"Gate movement timed out. Last status: {last_values or last_lines or 'no response'}",
+    )
 
 
 def wait_for_tray_done(timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_TRAY_MOVE_TIMEOUT_S", "10"))
-    port = _get_leonardo_port()
-    try:
-        with _LEONARDO_SERIAL_LOCK:
-            ser = _get_leonardo_serial()
-            started = time.time()
-            while time.time() - started < timeout_s:
-                raw = ser.readline()
-                if not raw:
-                    continue
-                text = raw.decode("utf-8", errors="ignore").strip()
-                if "TRAY_OUT_DONE" in text or "TRAY_IN_DONE" in text:
-                    return {"done": True, "response": text}
-            raise HTTPException(status_code=504, detail="Tray movement timed out.")
-    except Exception as exc:
-        if isinstance(exc, HTTPException):
-            raise
-        _close_leonardo_serial()
-        raise HTTPException(status_code=500, detail=f"wait_for_tray_done error: {exc}") from exc
+    started = time.time()
+    saw_motion = False
+    last_values: dict[str, str] = {}
+    last_lines: list[str] = []
+
+    while time.time() - started < timeout_s:
+        values, lines = _get_status_values(timeout_s=0.25, retries=1, raise_on_missing=False)
+        if lines:
+            last_lines = lines
+        if values:
+            last_values = values
+            tray_state = _get_status_int(values, "trayState", -1)
+            tray_pos = str(values.get("trayPos", "")).upper()
+            if tray_state not in {-1, 0}:
+                saw_motion = True
+            if tray_state == 0 and tray_pos in {"IN", "OUT"} and (saw_motion or time.time() - started >= 0.25):
+                return {"done": True, "status": values, "response": last_lines}
+        time.sleep(0.05)
+
+    raise HTTPException(
+        status_code=504,
+        detail=f"Tray movement timed out. Last status: {last_values or last_lines or 'no response'}",
+    )
