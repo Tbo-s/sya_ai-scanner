@@ -26,6 +26,7 @@ from services.machine_service import (
     close_gate as machine_close_gate,
     emergency_stop as machine_emergency_stop,
     get_gate_position as machine_get_gate_position,
+    read_distance as machine_read_distance,
     get_status as machine_get_status,
     get_tray_position as machine_get_tray_position,
     home_machine as machine_home_machine,
@@ -330,6 +331,11 @@ def emergency_stop_all():
 @router.get("/arduino/leonardo/status", tags=["Arduino"])
 def get_leonardo_status():
     return machine_get_status()
+
+
+@router.get("/arduino/leonardo/distance", tags=["Arduino"])
+def get_leonardo_distance():
+    return machine_read_distance()
 
 
 @router.post("/arduino/leonardo/wrist1/step", tags=["Arduino"])

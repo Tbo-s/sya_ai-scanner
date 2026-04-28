@@ -17,6 +17,9 @@ byte cmdIndex = 0;
 SFEVL53L1X distanceSensor;
 bool distanceSensorOk = false;
 uint16_t lastDistanceMm = 0;
+uint16_t lastRawDistanceMm = 0;
+uint8_t lastDistanceRangeStatus = 255;
+unsigned long lastDistanceUpdateMs = 0;
 
 // =========================
 // Servo objects
@@ -27,24 +30,18 @@ Servo servoWrist1;
 Servo servoWrist2;
 
 // =========================
-// Servo pins
+// Pins
 // =========================
 const int gateServoPin        = 9;
 const int phoneLoaderServoPin = 10;
 const int wrist1ServoPin      = 11;
 const int wrist2ServoPin      = 12;
 
-// =========================
-// Switches
-// =========================
 const int gateOpenSwitch  = A2;
 const int gateCloseSwitch = A3;
 const int trayOutSwitch   = 4;
 const int trayInSwitch    = 5;
 
-// =========================
-// Outputs
-// =========================
 const int vacuumMotor1Pin = 6;
 const int vacuumMotor2Pin = A1;
 const int valve1Pin       = 8;
@@ -55,11 +52,11 @@ const int valve2Pin       = A0;
 // =========================
 const int SERVO_STOP = 90;
 
-const int GATE_OPEN_SPEED   = 180;
-const int GATE_CLOSE_SPEED  = 0;
+const int GATE_OPEN_SPEED  = 180;
+const int GATE_CLOSE_SPEED = 0;
 
-const int TRAY_OUT_SPEED    = 180;
-const int TRAY_IN_SPEED     = 0;
+const int TRAY_OUT_SPEED = 180;
+const int TRAY_IN_SPEED  = 0;
 
 // Wrist extended range
 const int WRIST_MIN_ANGLE = -5;
@@ -102,6 +99,34 @@ GateState gateState = GATE_IDLE;
 TrayState trayState = TRAY_IDLE;
 GatePosition gatePosition = GATE_UNKNOWN_POS;
 TrayPosition trayPosition = TRAY_UNKNOWN_POS;
+
+// =========================
+// Forward declarations
+// =========================
+void readSerialNonBlocking();
+void processCommand(const char *cmd);
+
+void stopGate();
+void stopTray();
+
+void setWrist1Angle(int logicalAngle);
+void setWrist2Angle(int logicalAngle);
+int angleToMicroseconds(int angle);
+
+void updateGate();
+void updateTray();
+
+void updateGatePositionFromSwitches();
+void updateTrayPositionFromSwitches();
+
+void initDistanceSensor();
+void updateDistanceMeasurement();
+
+void printStatus();
+void printGatePositionValue();
+void printGatePositionValueInline();
+void printTrayPositionValue();
+void printTrayPositionValueInline();
 
 // =========================
 // Setup
@@ -354,17 +379,40 @@ void processCommand(const char *cmd) {
 
   else if (strcmp(cmd, "DISTANCE_MM") == 0) {
     updateDistanceMeasurement();
+
     Serial.print("ACK:DISTANCE_MM=");
-    if (distanceSensorOk) {
-      Serial.println(lastDistanceMm);
-    } else {
+
+    if (!distanceSensorOk) {
       Serial.println("ERROR");
+    } else if (lastDistanceMm == 0) {
+      Serial.println("NA");
+    } else {
+      Serial.println(lastDistanceMm);
     }
   }
 
   else if (strcmp(cmd, "DISTANCE_STATUS") == 0) {
+    updateDistanceMeasurement();
+
     Serial.print("ACK:DISTANCE_STATUS=");
-    Serial.println(distanceSensorOk ? "OK" : "ERROR");
+
+    if (!distanceSensorOk) {
+      Serial.println("ERROR");
+    } else {
+      Serial.print("OK,RANGE_STATUS=");
+      Serial.print(lastDistanceRangeStatus);
+      Serial.print(",RAW_MM=");
+      Serial.print(lastRawDistanceMm);
+      Serial.print(",LAST_MM=");
+      Serial.print(lastDistanceMm);
+      Serial.print(",AGE_MS=");
+
+      if (lastDistanceUpdateMs > 0) {
+        Serial.println(millis() - lastDistanceUpdateMs);
+      } else {
+        Serial.println("NA");
+      }
+    }
   }
 
   else if (strcmp(cmd, "GATE_POS") == 0) {
@@ -409,31 +457,62 @@ void processCommand(const char *cmd) {
 // Distance sensor
 // =========================
 void initDistanceSensor() {
-  if (distanceSensor.init()) {
-    distanceSensorOk = true;
+  int initStatus = distanceSensor.init();
+  distanceSensorOk = (initStatus == 0);
 
-    distanceSensor.setDistanceModeShort();
-    distanceSensor.setTimingBudgetInMs(50);
-    distanceSensor.setIntermeasurementPeriod(50);
+  if (!distanceSensorOk) {
+    lastDistanceRangeStatus = 255;
+    return;
+  }
 
-    distanceSensor.startRanging();
-  } else {
-    distanceSensorOk = false;
+  distanceSensor.setDistanceModeLong();
+  distanceSensor.setTimingBudgetInMs(50);
+  distanceSensor.setIntermeasurementPeriod(100);
+  distanceSensor.startRanging();
+
+  unsigned long started = millis();
+
+  while (millis() - started < 500) {
+    if (distanceSensor.checkForDataReady()) {
+      uint8_t rangeStatus = distanceSensor.getRangeStatus();
+      uint16_t distance = distanceSensor.getDistance();
+      distanceSensor.clearInterrupt();
+
+      lastRawDistanceMm = distance;
+      lastDistanceRangeStatus = rangeStatus;
+
+      if (rangeStatus == 0 && distance > 0) {
+        lastDistanceMm = distance;
+        lastDistanceUpdateMs = millis();
+      }
+
+      break;
+    }
+
+    delay(5);
   }
 }
 
 void updateDistanceMeasurement() {
   if (!distanceSensorOk) return;
+  if (!distanceSensor.checkForDataReady()) return;
 
-  if (distanceSensor.checkForDataReady()) {
-    lastDistanceMm = distanceSensor.getDistance();
-    distanceSensor.clearInterrupt();
+  uint8_t rangeStatus = distanceSensor.getRangeStatus();
+  uint16_t distance = distanceSensor.getDistance();
+  distanceSensor.clearInterrupt();
+
+  lastRawDistanceMm = distance;
+  lastDistanceRangeStatus = rangeStatus;
+
+  if (rangeStatus == 0 && distance > 0) {
+    lastDistanceMm = distance;
+    lastDistanceUpdateMs = millis();
   }
 }
 
 // =========================
 // Gate update logic
-// Geen Serial prints hier, anders krijg je extra onverwachte lijnen
+// Geen Serial prints hier
 // =========================
 void updateGate() {
   switch (gateState) {
@@ -460,7 +539,7 @@ void updateGate() {
 
 // =========================
 // Tray update logic
-// Geen Serial prints hier, anders krijg je extra onverwachte lijnen
+// Geen Serial prints hier
 // =========================
 void updateTray() {
   switch (trayState) {
@@ -542,9 +621,10 @@ void updateTrayPositionFromSwitches() {
 
 // =========================
 // Status output
-// STATUS is ook exact 1 lijn
 // =========================
 void printStatus() {
+  updateDistanceMeasurement();
+
   Serial.print("ACK:STATUS");
 
   Serial.print(",gateState=");
@@ -577,11 +657,29 @@ void printStatus() {
   Serial.print(",valve2=");
   Serial.print(digitalRead(valve2Pin));
 
+  Serial.print(",distanceOk=");
+  Serial.print(distanceSensorOk ? 1 : 0);
+
   Serial.print(",distanceMm=");
-  if (distanceSensorOk) {
+  if (distanceSensorOk && lastDistanceMm != 0) {
     Serial.print(lastDistanceMm);
+  } else if (distanceSensorOk) {
+    Serial.print("NA");
   } else {
     Serial.print("ERROR");
+  }
+
+  Serial.print(",rawDistanceMm=");
+  Serial.print(lastRawDistanceMm);
+
+  Serial.print(",rangeStatus=");
+  Serial.print(lastDistanceRangeStatus);
+
+  Serial.print(",distanceAgeMs=");
+  if (lastDistanceUpdateMs > 0) {
+    Serial.print(millis() - lastDistanceUpdateMs);
+  } else {
+    Serial.print("NA");
   }
 
   Serial.print(",gateOpenSw=");

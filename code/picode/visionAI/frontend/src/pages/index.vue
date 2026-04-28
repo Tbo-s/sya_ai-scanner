@@ -145,7 +145,7 @@
       <div class="sensor-status-card">
         <div class="control-title">Distance sensor</div>
         <div class="sensor-distance-value">{{ formattedDistanceMm() }} mm</div>
-        <div class="secondary-text">VL53L1X meting vanaf de module.</div>
+        <div class="secondary-text">VL53L4CD meting vanaf de module.</div>
       </div>
 
       <div class="control-grid">
@@ -778,6 +778,14 @@ export default {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : null;
     },
+    async fetchManualDistanceValue(timeoutMs = 1200) {
+      const response = await axios.get("/api/arduino/leonardo/distance", this.manualLeonardoRequestConfig(timeoutMs));
+      if (!response.data?.found) {
+        return null;
+      }
+      const parsed = Number(response.data?.distance_mm);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    },
     parseManualStatusBool(value) {
       return String(value ?? "") === "1";
     },
@@ -899,6 +907,16 @@ export default {
           return;
         }
         const status = response.data?.status || {};
+        let distanceMm = this.parseManualStatusNumber(status.distanceMm);
+        if (distanceMm === null) {
+          try {
+            distanceMm = await this.fetchManualDistanceValue(1200);
+          } catch (error) {
+            if (!this.isRequestTimeout(error)) {
+              throw error;
+            }
+          }
+        }
         this.manualStatus = {
           wrist1: this.parseManualStatusInt(status.wrist1),
           wrist2: this.parseManualStatusInt(status.wrist2),
@@ -908,7 +926,7 @@ export default {
           vac2: this.parseManualStatusBool(status.vac2),
           valve1: this.parseManualStatusBool(status.valve1),
           valve2: this.parseManualStatusBool(status.valve2),
-          distanceMm: this.parseManualStatusNumber(status.distanceMm),
+          distanceMm,
         };
       } catch (error) {
         if (this.isRequestTimeout(error)) {
