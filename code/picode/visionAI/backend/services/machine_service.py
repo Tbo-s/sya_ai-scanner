@@ -1042,6 +1042,67 @@ def read_distance() -> dict:
     return {"distance_mm": -1, "distance_cm": -1, "found": False, "response": lines}
 
 
+def read_distance_for_display() -> dict:
+    direct = read_distance()
+    if direct.get("found"):
+        return direct | {"source": "distance_mm"}
+
+    lines = _send_with_response(
+        "DISTANCE_STATUS",
+        stop_when=lambda line: (
+            line.startswith("ACK:DISTANCE_STATUS=")
+            or line.startswith("DISTANCE_STATUS=")
+        ),
+    )
+
+    for line in lines:
+        raw_payload = None
+        if line.startswith("ACK:DISTANCE_STATUS="):
+            raw_payload = line.split("=", 1)[1].strip()
+        elif line.startswith("DISTANCE_STATUS="):
+            raw_payload = line.split("=", 1)[1].strip()
+
+        if raw_payload is None:
+            continue
+
+        values: dict[str, str] = {}
+        for part in raw_payload.split(","):
+            chunk = part.strip()
+            if "=" not in chunk:
+                continue
+            key, value = chunk.split("=", 1)
+            values[key.strip()] = value.strip()
+
+        try:
+            last_mm = int(values.get("LAST_MM", "-1"))
+        except ValueError:
+            last_mm = -1
+
+        try:
+            range_status = int(values.get("RANGE_STATUS", "-1"))
+        except ValueError:
+            range_status = -1
+
+        if last_mm >= 0:
+            return {
+                "distance_mm": last_mm,
+                "distance_cm": last_mm / 10.0,
+                "found": last_mm > 0,
+                "response": direct.get("response", []) + lines,
+                "source": "distance_status",
+                "range_status": range_status,
+                "stale": range_status != 0,
+            }
+
+    return {
+        "distance_mm": -1,
+        "distance_cm": -1,
+        "found": False,
+        "response": direct.get("response", []) + lines,
+        "source": "distance_status",
+    }
+
+
 def tray_to_gate_position() -> dict:
     _send_line("TRAY_OUT")
     return {"command": "TRAY_OUT", "sent": True}
