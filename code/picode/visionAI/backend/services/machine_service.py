@@ -52,6 +52,10 @@ def _get_leonardo_write_timeout_s() -> float:
     return max(0.1, float(os.getenv("APP_LEONARDO_WRITE_TIMEOUT_S", "1.0")))
 
 
+def _hold_leonardo_control_lines_inactive() -> bool:
+    return os.getenv("APP_LEONARDO_CONTROL_LINES_INACTIVE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _use_persistent_leonardo_serial() -> bool:
     return os.getenv("APP_LEONARDO_PERSISTENT_SERIAL", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -139,6 +143,15 @@ def _set_serial_lines_inactive(ser: serial.Serial):
                 pass
 
 
+def _set_serial_lines_active(ser: serial.Serial):
+    for line_signal in ("dtr", "rts"):
+        if hasattr(ser, line_signal):
+            try:
+                setattr(ser, line_signal, True)
+            except Exception:
+                pass
+
+
 def _is_serial_write_timeout(exc: Exception) -> bool:
     if isinstance(exc, serial.SerialTimeoutException):
         return True
@@ -151,9 +164,13 @@ def _open_leonardo_serial(port: str, baudrate: int) -> serial.Serial:
     ser.baudrate = baudrate
     ser.timeout = 0.2
     ser.write_timeout = _get_leonardo_write_timeout_s()
-    _set_serial_lines_inactive(ser)
+    if _hold_leonardo_control_lines_inactive():
+        _set_serial_lines_inactive(ser)
     ser.open()
-    _set_serial_lines_inactive(ser)
+    if _hold_leonardo_control_lines_inactive():
+        _set_serial_lines_inactive(ser)
+    else:
+        _set_serial_lines_active(ser)
     _reset_serial_buffers(ser)
     return ser
 
