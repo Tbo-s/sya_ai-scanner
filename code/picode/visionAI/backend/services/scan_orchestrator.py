@@ -159,8 +159,9 @@ class ScanOrchestrator:
         await self._step(session, 29, "tray_to_gate_wait", machine_service.wait_for_tray_done)
         await asyncio.to_thread(camera_manager.start)
         await asyncio.to_thread(camera_manager.wait_for_frame, 5.0)
-        wrist_min = machine_service.wrist_min_angle()
-        wrist_max = machine_service.wrist_max_angle()
+        wrist2_min = machine_service.wrist_min_angle(2)
+        wrist2_max = machine_service.wrist_max_angle(2)
+        wrist1_max = machine_service.wrist_max_angle(1)
         await self._step(session, 30, "wrist1_neutral", machine_service.set_wrist1, 90)
 
         for step_num, label in ((31, "front_side_1"), (33, "front_side_2"), (35, "front_side_3")):
@@ -168,11 +169,11 @@ class ScanOrchestrator:
             session.photo_paths.append(result["path"])
             await self._broadcast("step_complete", step_num, f"photo_{label}", result)
             if step_num == 31:
-                await self._step(session, 32, "wrist2_neg90", machine_service.set_wrist2, wrist_min)
+                await self._step(session, 32, "wrist2_neg90", machine_service.set_wrist2, wrist2_min)
             elif step_num == 33:
-                await self._step(session, 34, "wrist2_pos90", machine_service.set_wrist2, wrist_max)
+                await self._step(session, 34, "wrist2_pos90", machine_service.set_wrist2, wrist2_max)
 
-        await self._step(session, 36, "wrist1_pos90", machine_service.set_wrist1, wrist_max)
+        await self._step(session, 36, "wrist1_pos90", machine_service.set_wrist1, wrist1_max)
         await self._step(session, 37, "tray_center", machine_service.tray_in)
         await self._step(session, 37, "tray_center_wait", machine_service.wait_for_tray_done)
         await self._step(session, 38, "wrist_home", machine_service.wrist_home)
@@ -192,11 +193,11 @@ class ScanOrchestrator:
             session.photo_paths.append(result["path"])
             await self._broadcast("step_complete", step_num, f"photo_{label}", result)
             if step_num == 47:
-                await self._step(session, 48, "wrist2_neg90_back", machine_service.set_wrist2, wrist_min)
+                await self._step(session, 48, "wrist2_neg90_back", machine_service.set_wrist2, wrist2_min)
             elif step_num == 49:
-                await self._step(session, 50, "wrist2_pos90_back", machine_service.set_wrist2, wrist_max)
+                await self._step(session, 50, "wrist2_pos90_back", machine_service.set_wrist2, wrist2_max)
 
-        await self._step(session, 52, "wrist1_pos90_back", machine_service.set_wrist1, wrist_max)
+        await self._step(session, 52, "wrist1_pos90_back", machine_service.set_wrist1, wrist1_max)
         session.current_step = 53
         await self._broadcast("step_complete", 53, "ai_analyzing", {"photo_count": len(session.photo_paths)})
         ai_result = await asyncio.to_thread(

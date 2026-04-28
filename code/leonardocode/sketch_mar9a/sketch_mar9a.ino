@@ -60,11 +60,15 @@ const int TRAY_OUT_SPEED = 180;
 const int TRAY_IN_SPEED  = 0;
 
 // Wrist extended range
-const int WRIST_MIN_ANGLE = -5;
-const int WRIST_MAX_ANGLE = 182;
+const int WRIST1_MIN_ANGLE = -5;
+const int WRIST1_MAX_ANGLE = 182;
+const int WRIST2_MIN_ANGLE = -5;
+const int WRIST2_MAX_ANGLE = 185;
 
-const int WRIST_MIN_US = 500;
-const int WRIST_MAX_US = 2500;
+const int WRIST1_MIN_US = 500;
+const int WRIST1_MAX_US = 2500;
+const int WRIST2_MIN_US = 500;
+const int WRIST2_MAX_US = 2500;
 
 int wrist1Angle = 90;
 int wrist2Angle = 90;
@@ -112,7 +116,7 @@ void stopTray();
 
 void setWrist1Angle(int logicalAngle);
 void setWrist2Angle(int logicalAngle);
-int angleToMicroseconds(int angle);
+int angleToMicroseconds(int angle, int minAngle, int maxAngle, int minUs, int maxUs);
 
 void updateGate();
 void updateTray();
@@ -313,7 +317,7 @@ void processCommand(const char *cmd) {
   }
 
   else if (strcmp(cmd, "WRIST2_RIGHT") == 0) {
-    setWrist2Angle(182);
+    setWrist2Angle(185);
     Serial.println("ACK:WRIST2_RIGHT");
   }
 
@@ -608,19 +612,23 @@ void stopTray() {
   servoPhoneLoader.write(SERVO_STOP);
 }
 
-int angleToMicroseconds(int angle) {
-  angle = constrain(angle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
-  return map(angle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE, WRIST_MIN_US, WRIST_MAX_US);
+int angleToMicroseconds(int angle, int minAngle, int maxAngle, int minUs, int maxUs) {
+  angle = constrain(angle, minAngle, maxAngle);
+  return map(angle, minAngle, maxAngle, minUs, maxUs);
 }
 
 void setWrist1Angle(int logicalAngle) {
-  wrist1Angle = constrain(logicalAngle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
-  servoWrist1.writeMicroseconds(angleToMicroseconds(wrist1Angle));
+  wrist1Angle = constrain(logicalAngle, WRIST1_MIN_ANGLE, WRIST1_MAX_ANGLE);
+  servoWrist1.writeMicroseconds(
+    angleToMicroseconds(wrist1Angle, WRIST1_MIN_ANGLE, WRIST1_MAX_ANGLE, WRIST1_MIN_US, WRIST1_MAX_US)
+  );
 }
 
 void setWrist2Angle(int logicalAngle) {
-  wrist2Angle = constrain(logicalAngle, WRIST_MIN_ANGLE, WRIST_MAX_ANGLE);
-  servoWrist2.writeMicroseconds(angleToMicroseconds(wrist2Angle));
+  wrist2Angle = constrain(logicalAngle, WRIST2_MIN_ANGLE, WRIST2_MAX_ANGLE);
+  servoWrist2.writeMicroseconds(
+    angleToMicroseconds(wrist2Angle, WRIST2_MIN_ANGLE, WRIST2_MAX_ANGLE, WRIST2_MIN_US, WRIST2_MAX_US)
+  );
 }
 
 // =========================

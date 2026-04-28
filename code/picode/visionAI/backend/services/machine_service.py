@@ -84,28 +84,36 @@ def _get_wrist_smooth_delay_ms() -> int:
     return max(0, int(os.getenv("APP_WRIST_SMOOTH_DELAY_MS", "25")))
 
 
-def _get_wrist_min_angle() -> int:
+def _get_wrist_min_angle(wrist_index: Optional[int] = None) -> int:
+    if wrist_index in (1, 2):
+        specific = os.getenv(f"APP_WRIST{wrist_index}_MIN_ANGLE")
+        if specific is not None:
+            return int(specific)
     return int(os.getenv("APP_WRIST_MIN_ANGLE", "-5"))
 
 
-def _get_wrist_max_angle() -> int:
+def _get_wrist_max_angle(wrist_index: Optional[int] = None) -> int:
+    if wrist_index in (1, 2):
+        specific = os.getenv(f"APP_WRIST{wrist_index}_MAX_ANGLE")
+        if specific is not None:
+            return int(specific)
     return int(os.getenv("APP_WRIST_MAX_ANGLE", "182"))
 
 
-def _clamp_wrist_angle(angle: int) -> int:
-    min_angle = _get_wrist_min_angle()
-    max_angle = _get_wrist_max_angle()
+def _clamp_wrist_angle(angle: int, wrist_index: Optional[int] = None) -> int:
+    min_angle = _get_wrist_min_angle(wrist_index)
+    max_angle = _get_wrist_max_angle(wrist_index)
     if min_angle > max_angle:
         min_angle, max_angle = max_angle, min_angle
     return max(min_angle, min(max_angle, int(angle)))
 
 
-def wrist_min_angle() -> int:
-    return min(_get_wrist_min_angle(), _get_wrist_max_angle())
+def wrist_min_angle(wrist_index: Optional[int] = None) -> int:
+    return min(_get_wrist_min_angle(wrist_index), _get_wrist_max_angle(wrist_index))
 
 
-def wrist_max_angle() -> int:
-    return max(_get_wrist_min_angle(), _get_wrist_max_angle())
+def wrist_max_angle(wrist_index: Optional[int] = None) -> int:
+    return max(_get_wrist_min_angle(wrist_index), _get_wrist_max_angle(wrist_index))
 
 
 def _close_leonardo_serial():
@@ -400,6 +408,8 @@ def _update_cached_state(values: dict[str, str]):
         try:
             _WRIST_ANGLE_CACHE[wrist_index] = _clamp_wrist_angle(
                 int(values.get(f"wrist{wrist_index}", _WRIST_ANGLE_CACHE[wrist_index]))
+                ,
+                wrist_index,
             )
         except (TypeError, ValueError):
             pass
@@ -867,21 +877,21 @@ def set_vacuum2(enabled: bool, raise_on_no_ack: bool = True) -> dict:
 
 
 def set_wrist1(angle: int) -> dict:
-    angle = _clamp_wrist_angle(angle)
+    angle = _clamp_wrist_angle(angle, 1)
     result = _move_wrist_smooth(1, angle, _get_wrist_current_angle("wrist1"))
     _WRIST_ANGLE_CACHE[1] = angle
     return result
 
 
 def set_wrist2(angle: int) -> dict:
-    angle = _clamp_wrist_angle(angle)
+    angle = _clamp_wrist_angle(angle, 2)
     result = _move_wrist_smooth(2, angle, _get_wrist_current_angle("wrist2"))
     _WRIST_ANGLE_CACHE[2] = angle
     return result
 
 
 def _move_wrist_fast(wrist_index: int, target_angle: int, current_angle: int) -> dict:
-    target_angle = _clamp_wrist_angle(target_angle)
+    target_angle = _clamp_wrist_angle(target_angle, wrist_index)
     command = f"WRIST{wrist_index}_ANGLE:{target_angle}"
     expected_tokens = _wrist_expected_tokens(wrist_index, target_angle)
     lines = _send_with_response(
@@ -900,7 +910,7 @@ def _move_wrist_fast(wrist_index: int, target_angle: int, current_angle: int) ->
 
 
 def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optional[int]) -> dict:
-    target_angle = _clamp_wrist_angle(target_angle)
+    target_angle = _clamp_wrist_angle(target_angle, wrist_index)
     command_prefix = f"WRIST{wrist_index}_ANGLE:"
 
     if current_angle is None:
@@ -914,7 +924,7 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
         time.sleep(_get_wrist_dwell_ms() / 1000.0)
         return _require_done(f"{command_prefix}{target_angle}", done, lines) | {"angle": target_angle, "smoothed": False}
 
-    current_angle = _clamp_wrist_angle(current_angle)
+    current_angle = _clamp_wrist_angle(current_angle, wrist_index)
     if current_angle == target_angle:
         return {
             "command": f"{command_prefix}{target_angle}",
@@ -996,13 +1006,13 @@ def _move_wrist_smooth(wrist_index: int, target_angle: int, current_angle: Optio
 
 def adjust_wrist1(delta: int) -> dict:
     current_angle = _WRIST_ANGLE_CACHE[1]
-    target_angle = _clamp_wrist_angle(current_angle + int(delta))
+    target_angle = _clamp_wrist_angle(current_angle + int(delta), 1)
     return _move_wrist_fast(1, target_angle, current_angle) | {"delta": int(delta)}
 
 
 def adjust_wrist2(delta: int) -> dict:
     current_angle = _WRIST_ANGLE_CACHE[2]
-    target_angle = _clamp_wrist_angle(current_angle + int(delta))
+    target_angle = _clamp_wrist_angle(current_angle + int(delta), 2)
     return _move_wrist_fast(2, target_angle, current_angle) | {"delta": int(delta)}
 
 
