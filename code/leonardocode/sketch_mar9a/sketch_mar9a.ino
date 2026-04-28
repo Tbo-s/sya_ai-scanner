@@ -18,6 +18,7 @@ SFEVL53L1X distanceSensor;
 bool distanceSensorOk = false;
 uint16_t lastDistanceMm = 0;
 uint16_t lastRawDistanceMm = 0;
+uint16_t lastDisplayDistanceMm = 0;
 uint8_t lastDistanceRangeStatus = 255;
 unsigned long lastDistanceUpdateMs = 0;
 
@@ -121,6 +122,9 @@ void updateTrayPositionFromSwitches();
 
 void initDistanceSensor();
 void updateDistanceMeasurement();
+void updateDisplayDistance(uint16_t distance, uint8_t rangeStatus);
+bool hasValidDistanceMeasurement();
+bool hasDisplayDistanceMeasurement();
 
 void printStatus();
 void printGatePositionValue();
@@ -399,7 +403,15 @@ void processCommand(const char *cmd) {
     if (!distanceSensorOk) {
       Serial.println("ERROR");
     } else {
-      Serial.print("OK,RANGE_STATUS=");
+      Serial.print("OK,VALID=");
+      Serial.print(hasValidDistanceMeasurement() ? 1 : 0);
+      Serial.print(",DISPLAY_MM=");
+      if (hasDisplayDistanceMeasurement()) {
+        Serial.print(lastDisplayDistanceMm);
+      } else {
+        Serial.print("NA");
+      }
+      Serial.print(",RANGE_STATUS=");
       Serial.print(lastDistanceRangeStatus);
       Serial.print(",RAW_MM=");
       Serial.print(lastRawDistanceMm);
@@ -466,8 +478,8 @@ void initDistanceSensor() {
   }
 
   distanceSensor.setDistanceModeLong();
-  distanceSensor.setTimingBudgetInMs(50);
-  distanceSensor.setIntermeasurementPeriod(100);
+  distanceSensor.setTimingBudgetInMs(100);
+  distanceSensor.setIntermeasurementPeriod(200);
   distanceSensor.startRanging();
 
   unsigned long started = millis();
@@ -480,6 +492,7 @@ void initDistanceSensor() {
 
       lastRawDistanceMm = distance;
       lastDistanceRangeStatus = rangeStatus;
+      updateDisplayDistance(distance, rangeStatus);
 
       if (rangeStatus == 0 && distance > 0) {
         lastDistanceMm = distance;
@@ -503,11 +516,31 @@ void updateDistanceMeasurement() {
 
   lastRawDistanceMm = distance;
   lastDistanceRangeStatus = rangeStatus;
+  updateDisplayDistance(distance, rangeStatus);
 
   if (rangeStatus == 0 && distance > 0) {
     lastDistanceMm = distance;
     lastDistanceUpdateMs = millis();
   }
+}
+
+void updateDisplayDistance(uint16_t distance, uint8_t rangeStatus) {
+  if (rangeStatus == 0 && distance > 0) {
+    lastDisplayDistanceMm = distance;
+    return;
+  }
+
+  if (distance > 0) {
+    lastDisplayDistanceMm = distance;
+  }
+}
+
+bool hasValidDistanceMeasurement() {
+  return distanceSensorOk && lastDistanceMm > 0 && lastDistanceRangeStatus == 0;
+}
+
+bool hasDisplayDistanceMeasurement() {
+  return distanceSensorOk && lastDisplayDistanceMm > 0;
 }
 
 // =========================
@@ -660,8 +693,20 @@ void printStatus() {
   Serial.print(",distanceOk=");
   Serial.print(distanceSensorOk ? 1 : 0);
 
+  Serial.print(",distanceValid=");
+  Serial.print(hasValidDistanceMeasurement() ? 1 : 0);
+
   Serial.print(",distanceMm=");
-  if (distanceSensorOk && lastDistanceMm != 0) {
+  if (hasDisplayDistanceMeasurement()) {
+    Serial.print(lastDisplayDistanceMm);
+  } else if (distanceSensorOk) {
+    Serial.print("NA");
+  } else {
+    Serial.print("ERROR");
+  }
+
+  Serial.print(",validDistanceMm=");
+  if (hasValidDistanceMeasurement()) {
     Serial.print(lastDistanceMm);
   } else if (distanceSensorOk) {
     Serial.print("NA");

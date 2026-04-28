@@ -1073,25 +1073,31 @@ def read_distance_for_display() -> dict:
             key, value = chunk.split("=", 1)
             values[key.strip()] = value.strip()
 
-        try:
-            last_mm = int(values.get("LAST_MM", "-1"))
-        except ValueError:
-            last_mm = -1
+        def _parse_int_value(key: str, default: int = -1) -> int:
+            try:
+                return int(values.get(key, str(default)))
+            except ValueError:
+                return default
 
-        try:
-            range_status = int(values.get("RANGE_STATUS", "-1"))
-        except ValueError:
-            range_status = -1
+        display_mm = _parse_int_value("DISPLAY_MM")
+        last_mm = _parse_int_value("LAST_MM")
+        valid = _parse_int_value("VALID", 1)
+        range_status = _parse_int_value("RANGE_STATUS")
 
-        if last_mm >= 0:
+        preferred_mm = display_mm if display_mm >= 0 else last_mm
+
+        if preferred_mm >= 0:
             return {
-                "distance_mm": last_mm,
-                "distance_cm": last_mm / 10.0,
-                "found": last_mm > 0,
+                "distance_mm": preferred_mm,
+                "distance_cm": preferred_mm / 10.0,
+                "found": preferred_mm > 0,
                 "response": direct.get("response", []) + lines,
                 "source": "distance_status",
+                "valid": valid == 1,
+                "display_mm": display_mm,
+                "valid_distance_mm": last_mm,
                 "range_status": range_status,
-                "stale": range_status != 0,
+                "stale": valid != 1 or range_status != 0,
             }
 
     return {
