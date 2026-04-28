@@ -1017,7 +1017,7 @@ def adjust_wrist2(delta: int) -> dict:
 
 
 def wrist_home() -> dict:
-    return {"wrist1": set_wrist1(90), "wrist2": set_wrist2(90)}
+    return {"wrist1": set_wrist1(90), "wrist2": set_wrist2(0)}
 
 
 def read_distance() -> dict:
