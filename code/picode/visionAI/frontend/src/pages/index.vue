@@ -152,58 +152,120 @@
         <div class="control-group">
           <div class="control-title">XY-axis</div>
           <div class="control-status secondary-text">{{ manualXyStep }} mm per tik · F{{ manualXyFeedRate }}</div>
-          <div class="joystick-control" aria-label="XY-arm bediening">
-            <div class="joystick-cell" />
-            <v-btn
-              class="joystick-btn"
-              icon
-              size="x-large"
-              :loading="isManualActionBusy('xy:forward')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
-              aria-label="Arm naar voren"
-              @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
-            >
-              <v-icon>mdi-arrow-up</v-icon>
-            </v-btn>
-            <div class="joystick-cell" />
+          <div class="joystick-stack">
+            <div class="joystick-block">
+              <div class="joystick-label secondary-text">Grof · {{ manualXyStep }} mm</div>
+              <div class="joystick-control" aria-label="XY-arm bediening grof">
+                <div class="joystick-cell" />
+                <v-btn
+                  class="joystick-btn"
+                  icon
+                  size="x-large"
+                  :loading="isManualActionBusy('xy:forward')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
+                  aria-label="Arm naar voren"
+                  @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
+                >
+                  <v-icon>mdi-arrow-up</v-icon>
+                </v-btn>
+                <div class="joystick-cell" />
 
-            <v-btn
-              class="joystick-btn"
-              icon
-              size="x-large"
-              :loading="isManualActionBusy('xy:left')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(manualXyStep, 0)"
-              aria-label="Arm naar links"
-              @click="jogXY(manualXyStep, 0, 'Arm links gestuurd.', 'xy:left')"
-            >
-              <v-icon>mdi-arrow-left</v-icon>
-            </v-btn>
-            <div class="joystick-center" aria-hidden="true" />
-            <v-btn
-              class="joystick-btn"
-              icon
-              size="x-large"
-              :loading="isManualActionBusy('xy:right')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(-manualXyStep, 0)"
-              aria-label="Arm naar rechts"
-              @click="jogXY(-manualXyStep, 0, 'Arm rechts gestuurd.', 'xy:right')"
-            >
-              <v-icon>mdi-arrow-right</v-icon>
-            </v-btn>
+                <v-btn
+                  class="joystick-btn"
+                  icon
+                  size="x-large"
+                  :loading="isManualActionBusy('xy:left')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(manualXyStep, 0)"
+                  aria-label="Arm naar links"
+                  @click="jogXY(manualXyStep, 0, 'Arm links gestuurd.', 'xy:left')"
+                >
+                  <v-icon>mdi-arrow-left</v-icon>
+                </v-btn>
+                <div class="joystick-center" aria-hidden="true" />
+                <v-btn
+                  class="joystick-btn"
+                  icon
+                  size="x-large"
+                  :loading="isManualActionBusy('xy:right')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(-manualXyStep, 0)"
+                  aria-label="Arm naar rechts"
+                  @click="jogXY(-manualXyStep, 0, 'Arm rechts gestuurd.', 'xy:right')"
+                >
+                  <v-icon>mdi-arrow-right</v-icon>
+                </v-btn>
 
-            <div class="joystick-cell" />
-            <v-btn
-              class="joystick-btn"
-              icon
-              size="x-large"
-              :loading="isManualActionBusy('xy:back')"
-              :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
-              aria-label="Arm naar achter"
-              @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
-            >
-              <v-icon>mdi-arrow-down</v-icon>
-            </v-btn>
-            <div class="joystick-cell" />
+                <div class="joystick-cell" />
+                <v-btn
+                  class="joystick-btn"
+                  icon
+                  size="x-large"
+                  :loading="isManualActionBusy('xy:back')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
+                  aria-label="Arm naar achter"
+                  @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
+                >
+                  <v-icon>mdi-arrow-down</v-icon>
+                </v-btn>
+                <div class="joystick-cell" />
+              </div>
+            </div>
+
+            <div class="joystick-block">
+              <div class="joystick-label secondary-text">Fijn · {{ manualXyFineStep }} mm</div>
+              <div class="joystick-control joystick-control--fine" aria-label="XY-arm bediening fijn">
+                <div class="joystick-cell joystick-cell--fine" />
+                <v-btn
+                  class="joystick-btn joystick-btn--fine"
+                  icon
+                  size="large"
+                  :loading="isManualActionBusy('xy:fine:forward')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyFineStep)"
+                  aria-label="Arm naar voren fijn"
+                  @click="jogXY(0, manualXyFineStep, 'Fijne stap naar voren gestuurd.', 'xy:fine:forward')"
+                >
+                  <v-icon>mdi-arrow-up</v-icon>
+                </v-btn>
+                <div class="joystick-cell joystick-cell--fine" />
+
+                <v-btn
+                  class="joystick-btn joystick-btn--fine"
+                  icon
+                  size="large"
+                  :loading="isManualActionBusy('xy:fine:left')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(manualXyFineStep, 0)"
+                  aria-label="Arm naar links fijn"
+                  @click="jogXY(manualXyFineStep, 0, 'Fijne stap links gestuurd.', 'xy:fine:left')"
+                >
+                  <v-icon>mdi-arrow-left</v-icon>
+                </v-btn>
+                <div class="joystick-center joystick-center--fine" aria-hidden="true" />
+                <v-btn
+                  class="joystick-btn joystick-btn--fine"
+                  icon
+                  size="large"
+                  :loading="isManualActionBusy('xy:fine:right')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(-manualXyFineStep, 0)"
+                  aria-label="Arm naar rechts fijn"
+                  @click="jogXY(-manualXyFineStep, 0, 'Fijne stap rechts gestuurd.', 'xy:fine:right')"
+                >
+                  <v-icon>mdi-arrow-right</v-icon>
+                </v-btn>
+
+                <div class="joystick-cell joystick-cell--fine" />
+                <v-btn
+                  class="joystick-btn joystick-btn--fine"
+                  icon
+                  size="large"
+                  :loading="isManualActionBusy('xy:fine:back')"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyFineStep)"
+                  aria-label="Arm naar achter fijn"
+                  @click="jogXY(0, -manualXyFineStep, 'Fijne stap naar achter gestuurd.', 'xy:fine:back')"
+                >
+                  <v-icon>mdi-arrow-down</v-icon>
+                </v-btn>
+                <div class="joystick-cell joystick-cell--fine" />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -669,6 +731,13 @@ export default {
     damageDetailsText() {
       const details = this.aiResult?.damage_details || [];
       return details.join(", ");
+    },
+    manualXyFineStep() {
+      const coarse = Number(this.manualXyStep);
+      if (!Number.isFinite(coarse) || coarse <= 0) {
+        return 0.1;
+      }
+      return Math.max(0.05, Number((coarse / 5).toFixed(2)));
     },
   },
   mounted() {
@@ -1668,6 +1737,26 @@ export default {
   justify-content: center;
 }
 
+.joystick-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  justify-content: center;
+}
+
+.joystick-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.joystick-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .joystick-control {
   display: grid;
   grid-template-columns: repeat(3, 64px);
@@ -1677,9 +1766,20 @@ export default {
   justify-items: center;
 }
 
+.joystick-control--fine {
+  grid-template-columns: repeat(3, 54px);
+  grid-template-rows: repeat(3, 54px);
+  gap: 8px;
+}
+
 .joystick-cell {
   width: 64px;
   height: 64px;
+}
+
+.joystick-cell--fine {
+  width: 54px;
+  height: 54px;
 }
 
 .joystick-btn {
@@ -1690,12 +1790,22 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
+.joystick-btn--fine {
+  width: 54px;
+  height: 54px;
+}
+
 .joystick-center {
   width: 28px;
   height: 28px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.joystick-center--fine {
+  width: 22px;
+  height: 22px;
 }
 
 .manual-imei {
