@@ -8,8 +8,10 @@
 // Serial parser
 // =========================
 const byte CMD_BUFFER_SIZE = 64;
-char cmdBuffer[CMD_BUFFER_SIZE];
-byte cmdIndex = 0;
+char usbCmdBuffer[CMD_BUFFER_SIZE];
+byte usbCmdIndex = 0;
+char runtimeCmdBuffer[CMD_BUFFER_SIZE];
+byte runtimeCmdIndex = 0;
 
 // =========================
 // Distance sensor
@@ -127,8 +129,8 @@ TrayPosition trayPosition = TRAY_UNKNOWN_POS;
 // =========================
 // Forward declarations
 // =========================
-void readSerialNonBlocking();
-void processCommand(const char *cmd);
+void readSerialNonBlocking(Stream &input, Print &output, char *cmdBuffer, byte &cmdIndex);
+void processCommand(Print &output, const char *cmd);
 
 void stopGate();
 void stopTray();
@@ -156,17 +158,18 @@ void updateDisplayDistance(uint16_t distance, uint8_t rangeStatus);
 bool hasValidDistanceMeasurement();
 bool hasDisplayDistanceMeasurement();
 
-void printStatus();
-void printGatePositionValue();
-void printGatePositionValueInline();
-void printTrayPositionValue();
-void printTrayPositionValueInline();
+void printStatus(Print &output);
+void printGatePositionValue(Print &output);
+void printGatePositionValueInline(Print &output);
+void printTrayPositionValue(Print &output);
+void printTrayPositionValueInline(Print &output);
 
 // =========================
 // Setup
 // =========================
 void setup() {
   Serial.begin(115200);
+  Serial1.begin(115200);
   Wire.begin();
 
   servoGate.attach(gateServoPin);
@@ -201,13 +204,15 @@ void setup() {
   initDistanceSensor();
 
   Serial.println("READY:LEONARDO");
+  Serial1.println("READY:LEONARDO");
 }
 
 // =========================
 // Loop
 // =========================
 void loop() {
-  readSerialNonBlocking();
+  readSerialNonBlocking(Serial1, Serial1, runtimeCmdBuffer, runtimeCmdIndex);
+  readSerialNonBlocking(Serial, Serial, usbCmdBuffer, usbCmdIndex);
 
   updateGate();
   updateTray();
@@ -225,9 +230,9 @@ void loop() {
 // =========================
 // Serial parser zonder String
 // =========================
-void readSerialNonBlocking() {
-  while (Serial.available() > 0) {
-    char c = Serial.read();
+void readSerialNonBlocking(Stream &input, Print &output, char *cmdBuffer, byte &cmdIndex) {
+  while (input.available() > 0) {
+    char c = input.read();
 
     if (c == '\r') {
       continue;
@@ -237,7 +242,7 @@ void readSerialNonBlocking() {
       cmdBuffer[cmdIndex] = '\0';
 
       if (cmdIndex > 0) {
-        processCommand(cmdBuffer);
+        processCommand(output, cmdBuffer);
       }
 
       cmdIndex = 0;
@@ -248,7 +253,7 @@ void readSerialNonBlocking() {
       cmdBuffer[cmdIndex++] = c;
     } else {
       cmdIndex = 0;
-      Serial.println("ERR:BUFFER_OVERFLOW");
+      output.println("ERR:BUFFER_OVERFLOW");
       return;
     }
   }
@@ -258,224 +263,224 @@ void readSerialNonBlocking() {
 // Command processor
 // Exact 1 antwoord per command
 // =========================
-void processCommand(const char *cmd) {
+void processCommand(Print &output, const char *cmd) {
   if (strcmp(cmd, "GATE_OPEN") == 0) {
     gateState = GATE_OPENING;
     servoGate.write(GATE_OPEN_SPEED);
-    Serial.println("ACK:GATE_OPEN");
+    output.println("ACK:GATE_OPEN");
   }
 
   else if (strcmp(cmd, "GATE_CLOSE") == 0) {
     gateState = GATE_CLOSING;
     servoGate.write(GATE_CLOSE_SPEED);
-    Serial.println("ACK:GATE_CLOSE");
+    output.println("ACK:GATE_CLOSE");
   }
 
   else if (strcmp(cmd, "GATE_STOP") == 0) {
     stopGate();
     gateState = GATE_IDLE;
     updateGatePositionFromSwitches();
-    Serial.println("ACK:GATE_STOP");
+    output.println("ACK:GATE_STOP");
   }
 
   else if (strcmp(cmd, "TRAY_OUT") == 0) {
     trayState = TRAY_OPENING;
     servoPhoneLoader.write(TRAY_OUT_SPEED);
-    Serial.println("ACK:TRAY_OUT");
+    output.println("ACK:TRAY_OUT");
   }
 
   else if (strcmp(cmd, "TRAY_IN") == 0) {
     trayState = TRAY_CLOSING;
     servoPhoneLoader.write(TRAY_IN_SPEED);
-    Serial.println("ACK:TRAY_IN");
+    output.println("ACK:TRAY_IN");
   }
 
   else if (strcmp(cmd, "TRAY_STOP") == 0) {
     stopTray();
     trayState = TRAY_IDLE;
     updateTrayPositionFromSwitches();
-    Serial.println("ACK:TRAY_STOP");
+    output.println("ACK:TRAY_STOP");
   }
 
   else if (strncmp(cmd, "WRIST1_ANGLE:", 13) == 0) {
     int angle = atoi(cmd + 13);
     setWrist1Angle(angle);
-    Serial.print("ACK:WRIST1_ANGLE=");
-    Serial.println(wrist1Angle);
+    output.print("ACK:WRIST1_ANGLE=");
+    output.println(wrist1Angle);
   }
 
   else if (strncmp(cmd, "WRIST2_ANGLE:", 13) == 0) {
     int angle = atoi(cmd + 13);
     setWrist2Angle(angle);
-    Serial.print("ACK:WRIST2_ANGLE=");
-    Serial.println(wrist2Angle);
+    output.print("ACK:WRIST2_ANGLE=");
+    output.println(wrist2Angle);
   }
 
   else if (strncmp(cmd, "WRIST2_US:", 10) == 0) {
     int pulseUs = atoi(cmd + 10);
     setWrist2Microseconds(pulseUs);
-    Serial.print("ACK:WRIST2_US=");
-    Serial.print(wrist2CurrentUs);
-    Serial.print(",LOGICAL=");
-    Serial.print(wrist2Angle);
-    Serial.print(",PHYSICAL=");
-    Serial.println(wrist2PhysicalAngle);
+    output.print("ACK:WRIST2_US=");
+    output.print(wrist2CurrentUs);
+    output.print(",LOGICAL=");
+    output.print(wrist2Angle);
+    output.print(",PHYSICAL=");
+    output.println(wrist2PhysicalAngle);
   }
 
   else if (strcmp(cmd, "WRIST_HOME") == 0) {
     setWrist1Angle(90);
     setWrist2Angle(0);
-    Serial.println("ACK:WRIST_HOME");
+    output.println("ACK:WRIST_HOME");
   }
 
   else if (strcmp(cmd, "WRIST1_LEFT") == 0) {
     setWrist1Angle(0);
-    Serial.println("ACK:WRIST1_LEFT");
+    output.println("ACK:WRIST1_LEFT");
   }
 
   else if (strcmp(cmd, "WRIST1_CENTER") == 0) {
     setWrist1Angle(90);
-    Serial.println("ACK:WRIST1_CENTER");
+    output.println("ACK:WRIST1_CENTER");
   }
 
   else if (strcmp(cmd, "WRIST1_RIGHT") == 0) {
     setWrist1Angle(180);
-    Serial.println("ACK:WRIST1_RIGHT");
+    output.println("ACK:WRIST1_RIGHT");
   }
 
   else if (strcmp(cmd, "WRIST2_LEFT") == 0) {
     setWrist2Angle(-90);
-    Serial.println("ACK:WRIST2_LEFT");
+    output.println("ACK:WRIST2_LEFT");
   }
 
   else if (strcmp(cmd, "WRIST2_CENTER") == 0) {
     setWrist2Angle(0);
-    Serial.println("ACK:WRIST2_CENTER");
+    output.println("ACK:WRIST2_CENTER");
   }
 
   else if (strcmp(cmd, "WRIST2_RIGHT") == 0) {
     setWrist2Angle(90);
-    Serial.println("ACK:WRIST2_RIGHT");
+    output.println("ACK:WRIST2_RIGHT");
   }
 
   else if (strcmp(cmd, "VAC1_ON") == 0) {
     digitalWrite(vacuumMotor1Pin, HIGH);
-    Serial.println("ACK:VAC1_ON");
+    output.println("ACK:VAC1_ON");
   }
 
   else if (strcmp(cmd, "VAC1_OFF") == 0) {
     digitalWrite(vacuumMotor1Pin, LOW);
-    Serial.println("ACK:VAC1_OFF");
+    output.println("ACK:VAC1_OFF");
   }
 
   else if (strcmp(cmd, "VAC2_ON") == 0) {
     digitalWrite(vacuumMotor2Pin, HIGH);
-    Serial.println("ACK:VAC2_ON");
+    output.println("ACK:VAC2_ON");
   }
 
   else if (strcmp(cmd, "VAC2_OFF") == 0) {
     digitalWrite(vacuumMotor2Pin, LOW);
-    Serial.println("ACK:VAC2_OFF");
+    output.println("ACK:VAC2_OFF");
   }
 
   else if (strcmp(cmd, "VAC_ALL_ON") == 0) {
     digitalWrite(vacuumMotor1Pin, HIGH);
     digitalWrite(vacuumMotor2Pin, HIGH);
-    Serial.println("ACK:VAC_ALL_ON");
+    output.println("ACK:VAC_ALL_ON");
   }
 
   else if (strcmp(cmd, "VAC_ALL_OFF") == 0) {
     digitalWrite(vacuumMotor1Pin, LOW);
     digitalWrite(vacuumMotor2Pin, LOW);
-    Serial.println("ACK:VAC_ALL_OFF");
+    output.println("ACK:VAC_ALL_OFF");
   }
 
   else if (strcmp(cmd, "VALVE1_ON") == 0) {
     digitalWrite(valve1Pin, HIGH);
-    Serial.println("ACK:VALVE1_ON");
+    output.println("ACK:VALVE1_ON");
   }
 
   else if (strcmp(cmd, "VALVE1_OFF") == 0) {
     digitalWrite(valve1Pin, LOW);
-    Serial.println("ACK:VALVE1_OFF");
+    output.println("ACK:VALVE1_OFF");
   }
 
   else if (strcmp(cmd, "VALVE2_ON") == 0) {
     digitalWrite(valve2Pin, HIGH);
-    Serial.println("ACK:VALVE2_ON");
+    output.println("ACK:VALVE2_ON");
   }
 
   else if (strcmp(cmd, "VALVE2_OFF") == 0) {
     digitalWrite(valve2Pin, LOW);
-    Serial.println("ACK:VALVE2_OFF");
+    output.println("ACK:VALVE2_OFF");
   }
 
   else if (strcmp(cmd, "VALVE_ALL_ON") == 0) {
     digitalWrite(valve1Pin, HIGH);
     digitalWrite(valve2Pin, HIGH);
-    Serial.println("ACK:VALVE_ALL_ON");
+    output.println("ACK:VALVE_ALL_ON");
   }
 
   else if (strcmp(cmd, "VALVE_ALL_OFF") == 0) {
     digitalWrite(valve1Pin, LOW);
     digitalWrite(valve2Pin, LOW);
-    Serial.println("ACK:VALVE_ALL_OFF");
+    output.println("ACK:VALVE_ALL_OFF");
   }
 
   else if (strcmp(cmd, "DISTANCE_MM") == 0) {
     updateDistanceMeasurement();
 
-    Serial.print("ACK:DISTANCE_MM=");
+    output.print("ACK:DISTANCE_MM=");
 
     if (!distanceSensorOk) {
-      Serial.println("ERROR");
+      output.println("ERROR");
     } else if (lastDistanceMm == 0) {
-      Serial.println("NA");
+      output.println("NA");
     } else {
-      Serial.println(lastDistanceMm);
+      output.println(lastDistanceMm);
     }
   }
 
   else if (strcmp(cmd, "DISTANCE_STATUS") == 0) {
     updateDistanceMeasurement();
 
-    Serial.print("ACK:DISTANCE_STATUS=");
+    output.print("ACK:DISTANCE_STATUS=");
 
     if (!distanceSensorOk) {
-      Serial.println("ERROR");
+      output.println("ERROR");
     } else {
-      Serial.print("OK,VALID=");
-      Serial.print(hasValidDistanceMeasurement() ? 1 : 0);
-      Serial.print(",DISPLAY_MM=");
+      output.print("OK,VALID=");
+      output.print(hasValidDistanceMeasurement() ? 1 : 0);
+      output.print(",DISPLAY_MM=");
       if (hasDisplayDistanceMeasurement()) {
-        Serial.print(lastDisplayDistanceMm);
+        output.print(lastDisplayDistanceMm);
       } else {
-        Serial.print("NA");
+        output.print("NA");
       }
-      Serial.print(",RANGE_STATUS=");
-      Serial.print(lastDistanceRangeStatus);
-      Serial.print(",RAW_MM=");
-      Serial.print(lastRawDistanceMm);
-      Serial.print(",LAST_MM=");
-      Serial.print(lastDistanceMm);
-      Serial.print(",AGE_MS=");
+      output.print(",RANGE_STATUS=");
+      output.print(lastDistanceRangeStatus);
+      output.print(",RAW_MM=");
+      output.print(lastRawDistanceMm);
+      output.print(",LAST_MM=");
+      output.print(lastDistanceMm);
+      output.print(",AGE_MS=");
 
       if (lastDistanceUpdateMs > 0) {
-        Serial.println(millis() - lastDistanceUpdateMs);
+        output.println(millis() - lastDistanceUpdateMs);
       } else {
-        Serial.println("NA");
+        output.println("NA");
       }
     }
   }
 
   else if (strcmp(cmd, "GATE_POS") == 0) {
-    Serial.print("ACK:GATE_POS=");
-    printGatePositionValue();
+    output.print("ACK:GATE_POS=");
+    printGatePositionValue(output);
   }
 
   else if (strcmp(cmd, "TRAY_POS") == 0) {
-    Serial.print("ACK:TRAY_POS=");
-    printTrayPositionValue();
+    output.print("ACK:TRAY_POS=");
+    printTrayPositionValue(output);
   }
 
   else if (strcmp(cmd, "STOP_ALL") == 0) {
@@ -493,16 +498,16 @@ void processCommand(const char *cmd) {
     updateGatePositionFromSwitches();
     updateTrayPositionFromSwitches();
 
-    Serial.println("ACK:STOP_ALL");
+    output.println("ACK:STOP_ALL");
   }
 
   else if (strcmp(cmd, "STATUS") == 0) {
-    printStatus();
+    printStatus(output);
   }
 
   else {
-    Serial.print("ERR:UNKNOWN_COMMAND=");
-    Serial.println(cmd);
+    output.print("ERR:UNKNOWN_COMMAND=");
+    output.println(cmd);
   }
 }
 
@@ -779,140 +784,140 @@ void updateTrayPositionFromSwitches() {
 // =========================
 // Status output
 // =========================
-void printStatus() {
+void printStatus(Print &output) {
   updateDistanceMeasurement();
 
-  Serial.print("ACK:STATUS");
+  output.print("ACK:STATUS");
 
-  Serial.print(",gateState=");
-  Serial.print(gateState);
+  output.print(",gateState=");
+  output.print(gateState);
 
-  Serial.print(",gatePos=");
-  printGatePositionValueInline();
+  output.print(",gatePos=");
+  printGatePositionValueInline(output);
 
-  Serial.print(",trayState=");
-  Serial.print(trayState);
+  output.print(",trayState=");
+  output.print(trayState);
 
-  Serial.print(",trayPos=");
-  printTrayPositionValueInline();
+  output.print(",trayPos=");
+  printTrayPositionValueInline(output);
 
-  Serial.print(",wrist1=");
-  Serial.print(wrist1Angle);
+  output.print(",wrist1=");
+  output.print(wrist1Angle);
 
-  Serial.print(",wrist1_physical=");
-  Serial.print(wrist1PhysicalAngle);
+  output.print(",wrist1_physical=");
+  output.print(wrist1PhysicalAngle);
 
-  Serial.print(",wrist1_us=");
-  Serial.print(wrist1CurrentUs);
+  output.print(",wrist1_us=");
+  output.print(wrist1CurrentUs);
 
-  Serial.print(",wrist2=");
-  Serial.print(wrist2Angle);
+  output.print(",wrist2=");
+  output.print(wrist2Angle);
 
-  Serial.print(",wrist2_physical=");
-  Serial.print(wrist2PhysicalAngle);
+  output.print(",wrist2_physical=");
+  output.print(wrist2PhysicalAngle);
 
-  Serial.print(",wrist2_us=");
-  Serial.print(wrist2CurrentUs);
+  output.print(",wrist2_us=");
+  output.print(wrist2CurrentUs);
 
-  Serial.print(",vac1=");
-  Serial.print(digitalRead(vacuumMotor1Pin));
+  output.print(",vac1=");
+  output.print(digitalRead(vacuumMotor1Pin));
 
-  Serial.print(",vac2=");
-  Serial.print(digitalRead(vacuumMotor2Pin));
+  output.print(",vac2=");
+  output.print(digitalRead(vacuumMotor2Pin));
 
-  Serial.print(",valve1=");
-  Serial.print(digitalRead(valve1Pin));
+  output.print(",valve1=");
+  output.print(digitalRead(valve1Pin));
 
-  Serial.print(",valve2=");
-  Serial.print(digitalRead(valve2Pin));
+  output.print(",valve2=");
+  output.print(digitalRead(valve2Pin));
 
-  Serial.print(",distanceOk=");
-  Serial.print(distanceSensorOk ? 1 : 0);
+  output.print(",distanceOk=");
+  output.print(distanceSensorOk ? 1 : 0);
 
-  Serial.print(",distanceValid=");
-  Serial.print(hasValidDistanceMeasurement() ? 1 : 0);
+  output.print(",distanceValid=");
+  output.print(hasValidDistanceMeasurement() ? 1 : 0);
 
-  Serial.print(",distanceMm=");
+  output.print(",distanceMm=");
   if (hasDisplayDistanceMeasurement()) {
-    Serial.print(lastDisplayDistanceMm);
+    output.print(lastDisplayDistanceMm);
   } else if (distanceSensorOk) {
-    Serial.print("NA");
+    output.print("NA");
   } else {
-    Serial.print("ERROR");
+    output.print("ERROR");
   }
 
-  Serial.print(",validDistanceMm=");
+  output.print(",validDistanceMm=");
   if (hasValidDistanceMeasurement()) {
-    Serial.print(lastDistanceMm);
+    output.print(lastDistanceMm);
   } else if (distanceSensorOk) {
-    Serial.print("NA");
+    output.print("NA");
   } else {
-    Serial.print("ERROR");
+    output.print("ERROR");
   }
 
-  Serial.print(",rawDistanceMm=");
-  Serial.print(lastRawDistanceMm);
+  output.print(",rawDistanceMm=");
+  output.print(lastRawDistanceMm);
 
-  Serial.print(",rangeStatus=");
-  Serial.print(lastDistanceRangeStatus);
+  output.print(",rangeStatus=");
+  output.print(lastDistanceRangeStatus);
 
-  Serial.print(",distanceAgeMs=");
+  output.print(",distanceAgeMs=");
   if (lastDistanceUpdateMs > 0) {
-    Serial.print(millis() - lastDistanceUpdateMs);
+    output.print(millis() - lastDistanceUpdateMs);
   } else {
-    Serial.print("NA");
+    output.print("NA");
   }
 
-  Serial.print(",gateOpenSw=");
-  Serial.print(digitalRead(gateOpenSwitch));
+  output.print(",gateOpenSw=");
+  output.print(digitalRead(gateOpenSwitch));
 
-  Serial.print(",gateCloseSw=");
-  Serial.print(digitalRead(gateCloseSwitch));
+  output.print(",gateCloseSw=");
+  output.print(digitalRead(gateCloseSwitch));
 
-  Serial.print(",trayOutSw=");
-  Serial.print(digitalRead(trayOutSwitch));
+  output.print(",trayOutSw=");
+  output.print(digitalRead(trayOutSwitch));
 
-  Serial.print(",trayInSw=");
-  Serial.println(digitalRead(trayInSwitch));
+  output.print(",trayInSw=");
+  output.println(digitalRead(trayInSwitch));
 }
 
 // =========================
 // Position output helpers
 // =========================
-void printGatePositionValue() {
-  printGatePositionValueInline();
-  Serial.println();
+void printGatePositionValue(Print &output) {
+  printGatePositionValueInline(output);
+  output.println();
 }
 
-void printGatePositionValueInline() {
+void printGatePositionValueInline(Print &output) {
   switch (gatePosition) {
     case GATE_UP:
-      Serial.print("UP");
+      output.print("UP");
       break;
     case GATE_DOWN:
-      Serial.print("DOWN");
+      output.print("DOWN");
       break;
     default:
-      Serial.print("UNKNOWN");
+      output.print("UNKNOWN");
       break;
   }
 }
 
-void printTrayPositionValue() {
-  printTrayPositionValueInline();
-  Serial.println();
+void printTrayPositionValue(Print &output) {
+  printTrayPositionValueInline(output);
+  output.println();
 }
 
-void printTrayPositionValueInline() {
+void printTrayPositionValueInline(Print &output) {
   switch (trayPosition) {
     case TRAY_OUT_POS:
-      Serial.print("OUT");
+      output.print("OUT");
       break;
     case TRAY_IN_POS:
-      Serial.print("IN");
+      output.print("IN");
       break;
     default:
-      Serial.print("UNKNOWN");
+      output.print("UNKNOWN");
       break;
   }
 }

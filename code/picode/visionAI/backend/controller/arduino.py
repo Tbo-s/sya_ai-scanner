@@ -139,7 +139,7 @@ def _infer_board_role(vid: Optional[int], pid: Optional[int], text_blob: str) ->
 
     if "leonardo" in txt:
         return "leonardo"
-    if "mega" in txt or "grbl" in txt or "ch340" in txt:
+    if "mega" in txt or "grbl" in txt:
         return "mega"
 
     return "unknown"
@@ -176,14 +176,25 @@ def _serialize_port(port_info: Any) -> dict[str, Any]:
 
 
 def _compute_port_suggestions(ports: list[dict[str, Any]]) -> dict[str, Any]:
+    configured_leonardo = _get_leonardo_port()
+    configured_grbl = _get_grbl_port()
+    devices = {p["device"] for p in ports}
     leonardo_candidates = [p["device"] for p in ports if p.get("board_role") == "leonardo"]
     mega_candidates = [p["device"] for p in ports if p.get("board_role") == "mega"]
 
+    suggested_leonardo = leonardo_candidates[0] if leonardo_candidates else (
+        configured_leonardo if configured_leonardo in devices else None
+    )
+    suggested_grbl = mega_candidates[0] if mega_candidates else (
+        configured_grbl if configured_grbl in devices else None
+    )
+    confidence = "high" if leonardo_candidates or mega_candidates else "medium" if suggested_leonardo or suggested_grbl else "low"
+
     return {
-        "leonardo_port": leonardo_candidates[0] if leonardo_candidates else None,
-        "grbl_port": mega_candidates[0] if mega_candidates else None,
-        "confidence": "high" if leonardo_candidates or mega_candidates else "low",
-        "notes": "Set APP_LEONARDO_PORT and APP_GRBL_PORT with the suggested values if correct.",
+        "leonardo_port": suggested_leonardo,
+        "grbl_port": suggested_grbl,
+        "confidence": confidence,
+        "notes": "Set APP_LEONARDO_PORT and APP_GRBL_PORT with the suggested values if correct. USB-TTL adapters may show up as generic USB serial devices.",
     }
 
 
