@@ -59,17 +59,26 @@ const int GATE_CLOSE_SPEED = 0;
 const int TRAY_OUT_SPEED = 180;
 const int TRAY_IN_SPEED  = 0;
 
+// Wrist 1 uses a 270-degree servo, but the rest of the app still addresses it
+// as a logical 0..180 axis. The logical center stays 90 and maps to a physical
+// 135-degree neutral position.
+const int WRIST1_LOGICAL_MIN_ANGLE = 0;
+const int WRIST1_LOGICAL_CENTER_ANGLE = 90;
+const int WRIST1_LOGICAL_MAX_ANGLE = 180;
+const int WRIST1_LEFT_PHYSICAL_ANGLE = 45;
+const int WRIST1_CENTER_PHYSICAL_ANGLE = 135;
+const int WRIST1_RIGHT_PHYSICAL_ANGLE = 225;
+
 // Wrist extended range
-const int WRIST1_MIN_ANGLE = 0;
-const int WRIST1_MAX_ANGLE = 180;
 const int WRIST2_LOGICAL_MIN_ANGLE = -90;
 const int WRIST2_LOGICAL_MAX_ANGLE = 90;
 const int WRIST2_LEFT_PHYSICAL_ANGLE = -14;
 const int WRIST2_CENTER_PHYSICAL_ANGLE = 83;
 const int WRIST2_RIGHT_PHYSICAL_ANGLE = 190;
 
-const int WRIST1_MIN_US = 500;
-const int WRIST1_MAX_US = 2500;
+const int WRIST1_LEFT_US = 500;
+const int WRIST1_CENTER_US = 1500;
+const int WRIST1_RIGHT_US = 2500;
 const int WRIST2_LEFT_US = 380;
 const int WRIST2_CENTER_US = 1490;
 const int WRIST2_RIGHT_US = 2800;
@@ -77,6 +86,8 @@ const int WRIST2_DIRECT_MIN_US = 300;
 const int WRIST2_DIRECT_MAX_US = 2900;
 
 int wrist1Angle = 90;
+int wrist1PhysicalAngle = WRIST1_CENTER_PHYSICAL_ANGLE;
+int wrist1CurrentUs = WRIST1_CENTER_US;
 int wrist2Angle = 0;
 int wrist2PhysicalAngle = WRIST2_CENTER_PHYSICAL_ANGLE;
 int wrist2CurrentUs = WRIST2_CENTER_US;
@@ -126,6 +137,8 @@ void setWrist1Angle(int logicalAngle);
 void setWrist2Angle(int logicalAngle);
 void setWrist2Microseconds(int pulseUs);
 int angleToMicroseconds(int angle, int minAngle, int maxAngle, int minUs, int maxUs);
+int wrist1LogicalToPhysicalAngle(int logicalAngle);
+int wrist1LogicalToMicroseconds(int logicalAngle);
 int wrist2LogicalToPhysicalAngle(int logicalAngle);
 int wrist2LogicalToMicroseconds(int logicalAngle);
 int wrist2MicrosecondsToPhysicalAngle(int pulseUs);
@@ -316,7 +329,7 @@ void processCommand(const char *cmd) {
   }
 
   else if (strcmp(cmd, "WRIST1_LEFT") == 0) {
-    setWrist1Angle(-5);
+    setWrist1Angle(0);
     Serial.println("ACK:WRIST1_LEFT");
   }
 
@@ -326,7 +339,7 @@ void processCommand(const char *cmd) {
   }
 
   else if (strcmp(cmd, "WRIST1_RIGHT") == 0) {
-    setWrist1Angle(182);
+    setWrist1Angle(180);
     Serial.println("ACK:WRIST1_RIGHT");
   }
 
@@ -641,6 +654,46 @@ int angleToMicroseconds(int angle, int minAngle, int maxAngle, int minUs, int ma
   return map(angle, minAngle, maxAngle, minUs, maxUs);
 }
 
+int wrist1LogicalToPhysicalAngle(int logicalAngle) {
+  int clampedLogical = constrain(logicalAngle, WRIST1_LOGICAL_MIN_ANGLE, WRIST1_LOGICAL_MAX_ANGLE);
+  if (clampedLogical >= WRIST1_LOGICAL_CENTER_ANGLE) {
+    return map(
+      clampedLogical,
+      WRIST1_LOGICAL_CENTER_ANGLE,
+      WRIST1_LOGICAL_MAX_ANGLE,
+      WRIST1_CENTER_PHYSICAL_ANGLE,
+      WRIST1_RIGHT_PHYSICAL_ANGLE
+    );
+  }
+  return map(
+    clampedLogical,
+    WRIST1_LOGICAL_MIN_ANGLE,
+    WRIST1_LOGICAL_CENTER_ANGLE,
+    WRIST1_LEFT_PHYSICAL_ANGLE,
+    WRIST1_CENTER_PHYSICAL_ANGLE
+  );
+}
+
+int wrist1LogicalToMicroseconds(int logicalAngle) {
+  int clampedLogical = constrain(logicalAngle, WRIST1_LOGICAL_MIN_ANGLE, WRIST1_LOGICAL_MAX_ANGLE);
+  if (clampedLogical >= WRIST1_LOGICAL_CENTER_ANGLE) {
+    return map(
+      clampedLogical,
+      WRIST1_LOGICAL_CENTER_ANGLE,
+      WRIST1_LOGICAL_MAX_ANGLE,
+      WRIST1_CENTER_US,
+      WRIST1_RIGHT_US
+    );
+  }
+  return map(
+    clampedLogical,
+    WRIST1_LOGICAL_MIN_ANGLE,
+    WRIST1_LOGICAL_CENTER_ANGLE,
+    WRIST1_LEFT_US,
+    WRIST1_CENTER_US
+  );
+}
+
 int wrist2LogicalToPhysicalAngle(int logicalAngle) {
   int clampedLogical = constrain(logicalAngle, WRIST2_LOGICAL_MIN_ANGLE, WRIST2_LOGICAL_MAX_ANGLE);
   if (clampedLogical >= 0) {
@@ -674,10 +727,10 @@ int wrist2MicrosecondsToLogicalAngle(int pulseUs) {
 }
 
 void setWrist1Angle(int logicalAngle) {
-  wrist1Angle = constrain(logicalAngle, WRIST1_MIN_ANGLE, WRIST1_MAX_ANGLE);
-  servoWrist1.writeMicroseconds(
-    angleToMicroseconds(wrist1Angle, WRIST1_MIN_ANGLE, WRIST1_MAX_ANGLE, WRIST1_MIN_US, WRIST1_MAX_US)
-  );
+  wrist1Angle = constrain(logicalAngle, WRIST1_LOGICAL_MIN_ANGLE, WRIST1_LOGICAL_MAX_ANGLE);
+  wrist1PhysicalAngle = wrist1LogicalToPhysicalAngle(wrist1Angle);
+  wrist1CurrentUs = wrist1LogicalToMicroseconds(wrist1Angle);
+  servoWrist1.writeMicroseconds(wrist1CurrentUs);
 }
 
 void setWrist2Angle(int logicalAngle) {
@@ -747,7 +800,10 @@ void printStatus() {
   Serial.print(wrist1Angle);
 
   Serial.print(",wrist1_physical=");
-  Serial.print(wrist1Angle);
+  Serial.print(wrist1PhysicalAngle);
+
+  Serial.print(",wrist1_us=");
+  Serial.print(wrist1CurrentUs);
 
   Serial.print(",wrist2=");
   Serial.print(wrist2Angle);
