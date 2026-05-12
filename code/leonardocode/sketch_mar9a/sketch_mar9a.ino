@@ -61,15 +61,16 @@ const int GATE_CLOSE_SPEED = 0;
 const int TRAY_OUT_SPEED = 180;
 const int TRAY_IN_SPEED  = 0;
 
-// Wrist 1 uses a 270-degree servo, but the rest of the app still addresses it
-// as a logical 0..180 axis. The logical center stays 90 and maps to a physical
-// 135-degree neutral position.
-const int WRIST1_LOGICAL_MIN_ANGLE = 0;
-const int WRIST1_LOGICAL_CENTER_ANGLE = 90;
-const int WRIST1_LOGICAL_MAX_ANGLE = 180;
-const int WRIST1_LEFT_PHYSICAL_ANGLE = 45;
-const int WRIST1_CENTER_PHYSICAL_ANGLE = 135;
-const int WRIST1_RIGHT_PHYSICAL_ANGLE = 225;
+// Wrist 1 uses calibrated reference points on the 270-degree servo:
+// - back:   logical 32  -> physical 77
+// - rest:   logical 93  -> physical 138
+// - front:  logical 152 -> physical 197
+const int WRIST1_LOGICAL_MIN_ANGLE = 32;
+const int WRIST1_LOGICAL_CENTER_ANGLE = 93;
+const int WRIST1_LOGICAL_MAX_ANGLE = 152;
+const int WRIST1_LEFT_PHYSICAL_ANGLE = 77;
+const int WRIST1_CENTER_PHYSICAL_ANGLE = 138;
+const int WRIST1_RIGHT_PHYSICAL_ANGLE = 197;
 
 // Wrist extended range
 const int WRIST2_LOGICAL_MIN_ANGLE = -90;
@@ -87,7 +88,7 @@ const int WRIST2_RIGHT_US = 2800;
 const int WRIST2_DIRECT_MIN_US = 300;
 const int WRIST2_DIRECT_MAX_US = 2900;
 
-int wrist1Angle = 90;
+int wrist1Angle = WRIST1_LOGICAL_CENTER_ANGLE;
 int wrist1PhysicalAngle = WRIST1_CENTER_PHYSICAL_ANGLE;
 int wrist1CurrentUs = WRIST1_CENTER_US;
 int wrist2Angle = 0;
@@ -328,23 +329,23 @@ void processCommand(Print &output, const char *cmd) {
   }
 
   else if (strcmp(cmd, "WRIST_HOME") == 0) {
-    setWrist1Angle(90);
+    setWrist1Angle(WRIST1_LOGICAL_CENTER_ANGLE);
     setWrist2Angle(0);
     output.println("ACK:WRIST_HOME");
   }
 
   else if (strcmp(cmd, "WRIST1_LEFT") == 0) {
-    setWrist1Angle(0);
+    setWrist1Angle(WRIST1_LOGICAL_MIN_ANGLE);
     output.println("ACK:WRIST1_LEFT");
   }
 
   else if (strcmp(cmd, "WRIST1_CENTER") == 0) {
-    setWrist1Angle(90);
+    setWrist1Angle(WRIST1_LOGICAL_CENTER_ANGLE);
     output.println("ACK:WRIST1_CENTER");
   }
 
   else if (strcmp(cmd, "WRIST1_RIGHT") == 0) {
-    setWrist1Angle(180);
+    setWrist1Angle(WRIST1_LOGICAL_MAX_ANGLE);
     output.println("ACK:WRIST1_RIGHT");
   }
 

@@ -162,7 +162,8 @@ class ScanOrchestrator:
         wrist2_min = machine_service.wrist_min_angle(2)
         wrist2_max = machine_service.wrist_max_angle(2)
         wrist1_max = machine_service.wrist_max_angle(1)
-        await self._step(session, 30, "wrist1_neutral", machine_service.set_wrist1, 90)
+        wrist1_home = machine_service.wrist1_home_angle()
+        await self._step(session, 30, "wrist1_neutral", machine_service.set_wrist1, wrist1_home)
 
         for step_num, label in ((31, "front_side_1"), (33, "front_side_2"), (35, "front_side_3")):
             result = await asyncio.to_thread(take_photo, label, session.session_id)
@@ -186,7 +187,7 @@ class ScanOrchestrator:
         await self._step(session, 44, "z_up_back", grbl_service.z_up)
         await self._step(session, 45, "tray_to_gate_back", machine_service.tray_to_gate_position)
         await self._step(session, 45, "tray_to_gate_back_wait", machine_service.wait_for_tray_done)
-        await self._step(session, 46, "wrist1_neutral_back", machine_service.set_wrist1, 90)
+        await self._step(session, 46, "wrist1_neutral_back", machine_service.set_wrist1, wrist1_home)
 
         for step_num, label in ((47, "back_side_1"), (49, "back_side_2"), (51, "back_side_3")):
             result = await asyncio.to_thread(take_photo, label, session.session_id)

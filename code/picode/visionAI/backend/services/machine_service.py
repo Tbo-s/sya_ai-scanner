@@ -14,7 +14,7 @@ _LEONARDO_SERIAL_LOCK = threading.RLock()
 _LEONARDO_SERIAL: Optional[serial.Serial] = None
 _LEONARDO_SERIAL_PORT = ""
 _LEONARDO_SERIAL_BAUD = 0
-_WRIST_ANGLE_CACHE = {1: 90, 2: 90}
+_WRIST_ANGLE_CACHE = {1: int(os.getenv("APP_WRIST1_HOME_ANGLE", "93")), 2: 90}
 _LAST_STATUS_VALUES: dict[str, str] = {}
 _LAST_STATUS_RESPONSE: list[str] = []
 _LAST_STATUS_AT = 0.0
@@ -114,6 +114,10 @@ def wrist_min_angle(wrist_index: Optional[int] = None) -> int:
 
 def wrist_max_angle(wrist_index: Optional[int] = None) -> int:
     return max(_get_wrist_min_angle(wrist_index), _get_wrist_max_angle(wrist_index))
+
+
+def wrist1_home_angle() -> int:
+    return _clamp_wrist_angle(int(os.getenv("APP_WRIST1_HOME_ANGLE", "93")), 1)
 
 
 def _close_leonardo_serial():
@@ -1017,7 +1021,7 @@ def adjust_wrist2(delta: int) -> dict:
 
 
 def wrist_home() -> dict:
-    return {"wrist1": set_wrist1(90), "wrist2": set_wrist2(0)}
+    return {"wrist1": set_wrist1(wrist1_home_angle()), "wrist2": set_wrist2(0)}
 
 
 def read_distance() -> dict:
