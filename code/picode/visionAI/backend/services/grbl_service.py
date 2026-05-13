@@ -19,6 +19,8 @@ _GRBL_SERIAL_BAUD: Optional[int] = None
 _ARM_POSITION_LOCK = threading.Lock()
 _ARM_XY_POSITION: dict[str, Optional[float]] = {"x": None, "y": None}
 _ARM_HOMED = False
+_LAST_GRBL_STATUS: Optional[dict[str, Any]] = None
+_LAST_GRBL_STATUS_AT: Optional[float] = None
 
 
 def _get_grbl_port() -> str:
@@ -309,6 +311,72 @@ def _apply_status_limits_to_tracked_position(status: Optional[dict[str, Any]]) -
         for axis in ("x", "y"):
             if limits.get(axis):
                 _ARM_XY_POSITION[axis] = 0.0
+
+
+def _cache_grbl_status(status: dict[str, Any]) -> None:
+    global _LAST_GRBL_STATUS, _LAST_GRBL_STATUS_AT
+
+    _LAST_GRBL_STATUS = {
+        "raw": status.get("raw"),
+        "state": status.get("state"),
+        "machine_position": dict(status.get("machine_position") or {}) or None,
+        "work_position": dict(status.get("work_position") or {}) or None,
+        "pin_state": status.get("pin_state", ""),
+        "pin_state_seen": bool(status.get("pin_state_seen")),
+        "limit_axes": list(status.get("limit_axes") or []),
+        "limits": dict(status.get("limits") or {"x": False, "y": False}),
+        "position": dict(status.get("position") or {}),
+        "homed": bool(status.get("homed")),
+        "soft_limits": dict(status.get("soft_limits") or _xy_soft_limits()),
+        "limit_toward_zero_sign": dict(
+            status.get("limit_toward_zero_sign")
+            or {"x": _get_limit_toward_zero_sign("X"), "y": _get_limit_toward_zero_sign("Y")}
+        ),
+        "limit_pin_mode": status.get("limit_pin_mode", _get_limit_pin_mode()),
+        "response": list(status.get("response") or []),
+    }
+    _LAST_GRBL_STATUS_AT = time.time()
+
+
+def _build_cached_grbl_status(reason: str) -> dict[str, Any]:
+    cached = dict(_LAST_GRBL_STATUS or {})
+    tracked_position = _status_position(None)
+
+    position = dict(cached.get("position") or {})
+    for axis in ("x", "y"):
+        if position.get(axis) is None:
+            position[axis] = tracked_position.get(axis)
+
+    with _ARM_POSITION_LOCK:
+        homed = _ARM_HOMED
+
+    age_ms: Optional[int] = None
+    if _LAST_GRBL_STATUS_AT is not None:
+        age_ms = max(0, int((time.time() - _LAST_GRBL_STATUS_AT) * 1000))
+
+    return {
+        "raw": cached.get("raw"),
+        "state": cached.get("state", "Unknown"),
+        "machine_position": cached.get("machine_position"),
+        "work_position": cached.get("work_position"),
+        "pin_state": cached.get("pin_state", ""),
+        "pin_state_seen": bool(cached.get("pin_state_seen")),
+        "limit_axes": list(cached.get("limit_axes") or []),
+        "limits": dict(cached.get("limits") or {"x": False, "y": False}),
+        "position": position,
+        "homed": homed,
+        "soft_limits": dict(cached.get("soft_limits") or _xy_soft_limits()),
+        "limit_toward_zero_sign": dict(
+            cached.get("limit_toward_zero_sign")
+            or {"x": _get_limit_toward_zero_sign("X"), "y": _get_limit_toward_zero_sign("Y")}
+        ),
+        "limit_pin_mode": cached.get("limit_pin_mode", _get_limit_pin_mode()),
+        "response": list(cached.get("response") or []),
+        "cached": True,
+        "stale": True,
+        "cache_age_ms": age_ms,
+        "status_error": reason,
+    }
 
 
 def _set_arm_unhomed() -> None:
@@ -815,8 +883,14 @@ def get_grbl_arm_status() -> dict[str, Any]:
                 "y": _get_limit_toward_zero_sign("Y"),
             }
             status["limit_pin_mode"] = _get_limit_pin_mode()
+            status["cached"] = False
+            status["stale"] = False
+            status["cache_age_ms"] = 0
+            _cache_grbl_status(status)
             return status
         except HTTPException as exc:
+            if exc.status_code == 504:
+                return _build_cached_grbl_status(str(exc.detail))
             if exc.status_code >= 500:
                 _close_grbl_serial_locked()
             raise
