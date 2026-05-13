@@ -942,7 +942,11 @@ def move_to_front_of_phone() -> dict[str, Any]:
         "requested_target": target["requested"],
         "target": {"x": target["x"], "y": target["y"]},
         "soft_limits": target["soft_limits"],
-        "results": [send_grbl("G90"), send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}")],
+        "results": [
+            send_grbl("G21"),
+            send_grbl("G90"),
+            send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}"),
+        ],
     }
 
 
@@ -957,7 +961,11 @@ def move_to_back_of_phone() -> dict[str, Any]:
         "requested_target": target["requested"],
         "target": {"x": target["x"], "y": target["y"]},
         "soft_limits": target["soft_limits"],
-        "results": [send_grbl("G90"), send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}")],
+        "results": [
+            send_grbl("G21"),
+            send_grbl("G90"),
+            send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}"),
+        ],
     }
 
 
@@ -967,6 +975,7 @@ def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
         "action": action,
         "results": _run_grbl_commands(
             [
+                ("G21", True),
                 ("G90", True),
                 (f"G1 Z{target_z} F{feed_rate}", True),
             ]
@@ -980,6 +989,7 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
         "action": action,
         "results": _run_grbl_commands(
             [
+                ("G21", True),
                 ("G91", True),
                 (f"G1 Z{delta_z} F{feed_rate}", True),
                 ("G90", True),
