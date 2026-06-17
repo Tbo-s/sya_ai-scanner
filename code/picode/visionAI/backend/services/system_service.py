@@ -26,14 +26,14 @@ def get_runtime_settings() -> dict[str, Any]:
             "x": float(os.getenv("APP_GRBL_MAX_X", "4.0")),
             "y": float(os.getenv("APP_GRBL_MAX_Y", "5.5")),
         },
-        "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120")),
+        "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "60")),
         "grbl_home_z_clearance": float(os.getenv("APP_GRBL_HOME_Z_CLEARANCE", "2.0")),
         "grbl_home_z_step": float(os.getenv("APP_GRBL_HOME_Z_STEP", "1.0")),
         "grbl_home_z_search_distance": float(os.getenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "100.0")),
         "grbl_home_z_feed_rate": int(
             os.getenv(
                 "APP_GRBL_HOME_Z_FEED_RATE",
-                os.getenv("APP_GRBL_MANUAL_Z_FEED_RATE", "120"),
+                "30",
             )
         ),
         "grbl_limit_pin_mode": os.getenv("APP_GRBL_LIMIT_PIN_MODE", "active_present").strip(),

@@ -523,6 +523,7 @@ curl -X POST http://127.0.0.1:3000/api/arduino/grbl/home
 `/api/arduino/grbl/home` voert de volledige arm-homeflow uit: Z eerst `+2 mm`,
 daarna X/Y naar hun limits, daarna Z in stappen van `-1 mm` tot de Z-limit onderaan
 geraakt wordt. De exacte waarden zijn configureerbaar met `APP_GRBL_HOME_Z_*`.
+De homingfeedrates staan standaard traag ingesteld: X/Y `F60` en Z `F30`.
 Voor homing wordt eerst een live GRBL-status gelezen. Als X/Y al op hun limit-switch
 staan, worden die assen direct als `0` gezet en niet verder tegen de stopper bewogen.
 Als de switchstatus niet gelezen kan worden, wordt homing afgebroken in plaats van blind

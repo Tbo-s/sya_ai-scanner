@@ -94,7 +94,7 @@ def _get_xy_max(axis: str) -> float:
 
 
 def _get_home_xy_feed_rate() -> int:
-    return int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120"))
+    return int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "60"))
 
 
 def _get_home_xy_search_distance() -> float:
@@ -123,7 +123,7 @@ def _get_home_z_search_distance() -> float:
 
 
 def _get_home_z_feed_rate() -> int:
-    return int(os.getenv("APP_GRBL_HOME_Z_FEED_RATE", str(_get_manual_z_feed_rate())))
+    return int(os.getenv("APP_GRBL_HOME_Z_FEED_RATE", "30"))
 
 
 def _get_limit_toward_zero_sign(axis: str) -> int:

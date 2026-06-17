@@ -163,7 +163,7 @@ def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
 
     monkeypatch.setenv("APP_GRBL_HOME_Z_STEP", "1.0")
     monkeypatch.setenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "5.0")
-    monkeypatch.setenv("APP_GRBL_HOME_Z_FEED_RATE", "60")
+    monkeypatch.setenv("APP_GRBL_HOME_Z_FEED_RATE", "30")
     monkeypatch.setattr(
         grbl_service,
         "_read_homing_limit_precheck",
@@ -178,7 +178,7 @@ def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
     assert [
         call["sequence"][2]
         for call in calls
-    ] == [("G1 Z-1.0 F60", True), ("G1 Z-1.0 F60", True), ("G1 Z-1.0 F60", True)]
+    ] == [("G1 Z-1.0 F30", True), ("G1 Z-1.0 F30", True), ("G1 Z-1.0 F30", True)]
 
 
 def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
@@ -247,7 +247,7 @@ def test_home_xy_axis_requires_limit_precheck_before_motion(monkeypatch):
         return [{"idle": {"limit_triggered": True, "limit_axes": ["x"]}}]
 
     monkeypatch.setenv("APP_GRBL_HOME_XY_SEARCH_DISTANCE", "10")
-    monkeypatch.setenv("APP_GRBL_HOME_XY_FEED_RATE", "120")
+    monkeypatch.setenv("APP_GRBL_HOME_XY_FEED_RATE", "60")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
     monkeypatch.setattr(grbl_service, "_set_arm_axis_zero", lambda axis: None)
 
