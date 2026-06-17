@@ -9,6 +9,24 @@ from typing import Optional
 from fastapi import HTTPException
 
 
+class FlowState:
+    BOOT = "BOOT"
+    WELCOME = "WELCOME"
+    IMEI_SCAN = "IMEI_SCAN"
+    DEVICE_LOOKUP = "DEVICE_LOOKUP"
+    WAIT_POWER_OFF = "WAIT_POWER_OFF"
+    LOAD_DEVICE = "LOAD_DEVICE"
+    CLOSE_BOX = "CLOSE_BOX"
+    CAPTURE_FRONT = "CAPTURE_FRONT"
+    CAPTURE_BACK = "CAPTURE_BACK"
+    UPLOAD_RESULTS = "UPLOAD_RESULTS"
+    RETURN_DEVICE = "RETURN_DEVICE"
+    SHOW_PRICE = "SHOW_PRICE"
+    DONE = "DONE"
+    ERROR = "ERROR"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
+
+
 @dataclass
 class ScanSession:
     session_id: str
@@ -18,6 +36,7 @@ class ScanSession:
     photo_paths: list[str] = field(default_factory=list)
     ai_result: Optional[dict] = None
     status: str = "running"
+    state: str = FlowState.LOAD_DEVICE
     current_step: int = 0
     error: Optional[str] = None
 
@@ -60,8 +79,15 @@ class ScanOrchestrator:
         await asyncio.to_thread(self._hw_emergency_stop)
         if self.current_session:
             self.current_session.status = "failed"
+            self.current_session.state = FlowState.EMERGENCY_STOP
             self.current_session.error = "emergency_abort"
-        await self._broadcast("scan_failed", 0, "emergency_abort", {"reason": "abort"})
+        await self._broadcast(
+            "scan_failed",
+            0,
+            "emergency_abort",
+            {"reason": "abort"},
+            state=FlowState.EMERGENCY_STOP,
+        )
 
     def get_status(self) -> Optional[dict]:
         if not self.current_session:
@@ -70,6 +96,7 @@ class ScanOrchestrator:
         return {
             "session_id": session.session_id,
             "status": session.status,
+            "state": session.state,
             "current_step": session.current_step,
             "imei": session.imei,
             "device_model": session.device_model,
@@ -90,13 +117,22 @@ class ScanOrchestrator:
         except Exception:
             pass
 
-    async def _broadcast(self, event_type: str, step: int, step_name: str, data: dict):
+    async def _broadcast(
+        self,
+        event_type: str,
+        step: int,
+        step_name: str,
+        data: dict,
+        state: Optional[str] = None,
+    ):
+        current_state = state or (self.current_session.state if self.current_session else "")
         payload = {
             "scan_event": {
                 "type": event_type,
+                "state": current_state,
                 "step": step,
                 "step_name": step_name,
-                "data": data,
+                "data": {"state": current_state, **data},
             }
         }
         try:
@@ -109,13 +145,25 @@ class ScanOrchestrator:
             await self._execute_sequence(session)
         except asyncio.CancelledError:
             session.status = "failed"
+            session.state = FlowState.ERROR
             session.error = "cancelled"
             raise
         except Exception as exc:
             session.status = "failed"
+            session.state = FlowState.ERROR
             session.error = str(exc)
-            await self._broadcast("scan_failed", session.current_step, "error", {"error": str(exc)})
+            await self._broadcast(
+                "scan_failed",
+                session.current_step,
+                "error",
+                {"error": str(exc)},
+                state=FlowState.ERROR,
+            )
             await asyncio.to_thread(self._hw_emergency_stop)
+
+    async def _set_state(self, session: ScanSession, state: str, data: Optional[dict] = None):
+        session.state = state
+        await self._broadcast("state_changed", session.current_step, state.lower(), data or {}, state=state)
 
     async def _step(self, session: ScanSession, step_num: int, step_name: str, fn, *args, **kwargs):
         session.current_step = step_num
@@ -127,7 +175,7 @@ class ScanOrchestrator:
         session.status = "awaiting_user"
         session.current_step = step_num
         self._user_event.clear()
-        await self._broadcast("awaiting_user", step_num, step_name, {"message": message})
+        await self._broadcast("awaiting_user", step_num, step_name, {"message": message}, state=session.state)
         timeout = float(os.getenv("APP_USER_CONFIRM_TIMEOUT_S", "300"))
         try:
             await asyncio.wait_for(self._user_event.wait(), timeout=timeout)
@@ -142,15 +190,20 @@ class ScanOrchestrator:
 
         vacuum_dwell = float(os.getenv("APP_VACUUM_DWELL_S", "1.0"))
 
+        await self._set_state(session, FlowState.LOAD_DEVICE)
         await self._step(session, 19, "gate_open", machine_service.open_gate)
         await self._step(session, 19, "gate_open_wait", machine_service.wait_for_gate_done)
         await self._step(session, 20, "tray_out", machine_service.tray_out)
         await self._step(session, 20, "tray_out_wait", machine_service.wait_for_tray_done)
         await self._await_user(session, 21, "phone_added_check", "Toestel toegevoegd?")
+
+        await self._set_state(session, FlowState.CLOSE_BOX)
         await self._step(session, 23, "tray_in", machine_service.tray_in)
         await self._step(session, 23, "tray_in_wait", machine_service.wait_for_tray_done)
         await self._step(session, 24, "gate_close", machine_service.close_gate)
         await self._step(session, 24, "gate_close_wait", machine_service.wait_for_gate_done)
+
+        await self._set_state(session, FlowState.CAPTURE_FRONT)
         await self._step(session, 25, "arm_approach_front", grbl_service.move_to_front_slow_with_distance_stop)
         await self._step(session, 27, "vacuum_on", machine_service.vacuum_on)
         await asyncio.sleep(vacuum_dwell)
@@ -180,6 +233,8 @@ class ScanOrchestrator:
         await self._step(session, 38, "wrist_home", machine_service.wrist_home)
         await self._step(session, 39, "z_down", grbl_service.z_down)
         await self._step(session, 40, "vacuum_off", machine_service.vacuum_off)
+
+        await self._set_state(session, FlowState.CAPTURE_BACK)
         await self._step(session, 41, "arm_to_back_rapid", grbl_service.move_to_back_of_phone)
         await self._step(session, 42, "arm_approach_back", grbl_service.move_to_back_slow_with_distance_stop)
         await self._step(session, 43, "vacuum_on_back", machine_service.vacuum_on)
@@ -199,6 +254,7 @@ class ScanOrchestrator:
                 await self._step(session, 50, "wrist2_pos90_back", machine_service.set_wrist2, wrist2_max)
 
         await self._step(session, 52, "wrist1_pos90_back", machine_service.set_wrist1, wrist1_max)
+        await self._set_state(session, FlowState.UPLOAD_RESULTS)
         session.current_step = 53
         await self._broadcast("step_complete", 53, "ai_analyzing", {"photo_count": len(session.photo_paths)})
         ai_result = await asyncio.to_thread(
@@ -210,6 +266,8 @@ class ScanOrchestrator:
         )
         session.ai_result = ai_result.model_dump()
         await self._broadcast("step_complete", 53, "ai_done", session.ai_result)
+
+        await self._set_state(session, FlowState.RETURN_DEVICE)
         await self._step(session, 54, "tray_center_back", machine_service.tray_in)
         await self._step(session, 54, "tray_center_back_wait", machine_service.wait_for_tray_done)
         await self._step(session, 55, "wrist_home_back", machine_service.wrist_home)
@@ -220,5 +278,12 @@ class ScanOrchestrator:
         await self._step(session, 59, "tray_out_return", machine_service.tray_out)
         await self._step(session, 59, "tray_out_return_wait", machine_service.wait_for_tray_done)
         session.status = "complete"
+        session.state = FlowState.SHOW_PRICE
         session.current_step = 60
-        await self._broadcast("scan_complete", 60, "phone_retrieval", {"ai_result": session.ai_result})
+        await self._broadcast(
+            "scan_complete",
+            60,
+            "phone_retrieval",
+            {"ai_result": session.ai_result},
+            state=FlowState.SHOW_PRICE,
+        )

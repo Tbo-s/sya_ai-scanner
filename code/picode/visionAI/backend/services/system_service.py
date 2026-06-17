@@ -27,10 +27,20 @@ def get_runtime_settings() -> dict[str, Any]:
             "y": float(os.getenv("APP_GRBL_MAX_Y", "5.5")),
         },
         "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "120")),
+        "grbl_home_z_clearance": float(os.getenv("APP_GRBL_HOME_Z_CLEARANCE", "2.0")),
+        "grbl_home_z_step": float(os.getenv("APP_GRBL_HOME_Z_STEP", "1.0")),
+        "grbl_home_z_search_distance": float(os.getenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "100.0")),
+        "grbl_home_z_feed_rate": int(
+            os.getenv(
+                "APP_GRBL_HOME_Z_FEED_RATE",
+                os.getenv("APP_GRBL_MANUAL_Z_FEED_RATE", "120"),
+            )
+        ),
         "grbl_limit_pin_mode": os.getenv("APP_GRBL_LIMIT_PIN_MODE", "active_present").strip(),
         "grbl_limit_toward_zero_sign": {
             "x": _limit_toward_zero_sign("X"),
             "y": _limit_toward_zero_sign("Y"),
+            "z": _limit_toward_zero_sign("Z"),
         },
         "frontend_dist_dir": os.getenv("APP_FRONTEND_DIST", "").strip() or "frontend/dist",
         "camera_index": int(os.getenv("APP_CAMERA_INDEX", "0")),
@@ -64,7 +74,7 @@ def home_axes() -> dict[str, Any]:
 
     results = []
     results.append({"step": "leonardo_home", "result": machine_service.home_machine()})
-    results.append({"step": "grbl_home_xy", "result": grbl_service.home_xy_to_limits()})
+    results.append({"step": "grbl_home_axes", "result": grbl_service.home_axes_to_limits()})
     return {"ok": True, "results": results}
 
 
@@ -74,6 +84,7 @@ def boot_initialize() -> dict[str, Any]:
     report = {
         "leonardo_warmup": None,
         "safe_idle": None,
+        "grbl_home_axes": None,
         "grbl_home_xy": None,
         "grbl_boot": None,
         "errors": [],
@@ -93,9 +104,11 @@ def boot_initialize() -> dict[str, Any]:
 
     if _is_enabled("APP_GRBL_HOME_ON_BOOT", "1"):
         try:
-            report["grbl_home_xy"] = grbl_service.home_xy_to_limits()
+            grbl_home_result = grbl_service.home_axes_to_limits()
+            report["grbl_home_axes"] = grbl_home_result
+            report["grbl_home_xy"] = grbl_home_result
         except Exception as exc:
-            report["errors"].append({"step": "grbl_home_xy", "error": str(exc)})
+            report["errors"].append({"step": "grbl_home_axes", "error": str(exc)})
 
     if _is_enabled("APP_GRBL_BOOT_SEQUENCE_ENABLED", "0"):
         try:

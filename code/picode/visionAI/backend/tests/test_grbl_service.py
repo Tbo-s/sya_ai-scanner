@@ -1,7 +1,15 @@
 import pytest
 
 import services.grbl_service as grbl_service
-from services.grbl_service import _parse_sequence, is_safe_grbl_command, manual_z_down, manual_z_up, z_down, z_up
+from services.grbl_service import (
+    _parse_sequence,
+    home_axes_to_limits,
+    is_safe_grbl_command,
+    manual_z_down,
+    manual_z_up,
+    z_down,
+    z_up,
+)
 
 
 def test_grbl_allows_basic_command():
@@ -30,26 +38,30 @@ def test_parse_sequence_filters_empty_parts():
 
 def test_parse_grbl_status_line_extracts_coordinates_and_limits():
     grbl_service._set_arm_unhomed()
-    status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|WPos:0.500,1.500,0.000|Pn:XY>")
+    status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|WPos:0.500,1.500,0.000|Pn:XYZ>")
 
     assert status is not None
     assert status["state"] == "Idle"
     assert status["machine_position"] == {"x": 1.0, "y": 2.0, "z": 3.0}
     assert status["work_position"] == {"x": 0.5, "y": 1.5, "z": 0.0}
-    assert status["limits"] == {"x": True, "y": True}
-    assert status["limit_axes"] == ["x", "y"]
+    assert status["limits"] == {"x": True, "y": True, "z": True}
+    assert status["limit_axes"] == ["x", "y", "z"]
 
 
 def test_parse_grbl_status_line_supports_active_absent_limit_pins(monkeypatch):
     monkeypatch.setenv("APP_GRBL_LIMIT_PIN_MODE", "active_absent")
 
+    status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|Pn:XYZ>")
+    assert status is not None
+    assert status["limits"] == {"x": False, "y": False, "z": False}
+
     status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000|Pn:XY>")
     assert status is not None
-    assert status["limits"] == {"x": False, "y": False}
+    assert status["limits"] == {"x": False, "y": False, "z": True}
 
     status = grbl_service._parse_grbl_status_line("<Idle|MPos:1.000,2.000,3.000>")
     assert status is not None
-    assert status["limits"] == {"x": False, "y": False}
+    assert status["limits"] == {"x": False, "y": False, "z": False}
 
 
 def test_limit_stop_axes_use_configured_zero_direction(monkeypatch):
@@ -76,7 +88,7 @@ def test_z_up_uses_absolute_positioning(monkeypatch):
     result = z_up()
 
     assert result["action"] == "z_up"
-    assert commands == [("G90", True), ("G1 Z42.5 F1234", True)]
+    assert commands == [("G21", True), ("G90", True), ("G1 Z42.5 F1234", True)]
     assert wait_flags == [False]
 
 
@@ -96,7 +108,7 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
     result = z_down()
 
     assert result["action"] == "z_down"
-    assert commands == [("G90", True), ("G1 Z7.0 F900", True)]
+    assert commands == [("G21", True), ("G90", True), ("G1 Z7.0 F900", True)]
     assert wait_flags == [False]
 
 
@@ -116,7 +128,7 @@ def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
     result = manual_z_up()
 
     assert result["action"] == "manual_z_up"
-    assert commands == [("G91", True), ("G1 Z1.25 F90", True), ("G90", True)]
+    assert commands == [("G21", True), ("G91", True), ("G1 Z1.25 F90", True), ("G90", True)]
     assert wait_flags == [True]
 
 
@@ -136,8 +148,52 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
     result = manual_z_down()
 
     assert result["action"] == "manual_z_down"
-    assert commands == [("G91", True), ("G1 Z-0.75 F60", True), ("G90", True)]
+    assert commands == [("G21", True), ("G91", True), ("G1 Z-0.75 F60", True), ("G90", True)]
     assert wait_flags == [True]
+
+
+def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
+    calls = []
+
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, **kwargs):
+        calls.append({"sequence": sequence, "wait_for_idle": wait_for_idle, "kwargs": kwargs})
+        if kwargs.get("observe_limit_axes") == {"z"} and len(calls) == 3:
+            return [{"idle": {"limit_triggered": True, "limit_axes": ["z"]}}]
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setenv("APP_GRBL_HOME_Z_STEP", "1.0")
+    monkeypatch.setenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "5.0")
+    monkeypatch.setenv("APP_GRBL_HOME_Z_FEED_RATE", "60")
+    monkeypatch.setattr(grbl_service, "get_grbl_arm_status", lambda: {"limits": {"z": False}})
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+
+    result = grbl_service._home_z_axis()
+
+    assert result["stopped_by_limit"] is True
+    assert result["steps"] == 3
+    assert [
+        call["sequence"][2]
+        for call in calls
+    ] == [("G1 Z-1.0 F60", True), ("G1 Z-1.0 F60", True), ("G1 Z-1.0 F60", True)]
+
+
+def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
+    monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
+    monkeypatch.setattr(grbl_service, "_home_z_clearance", lambda: calls.append("z_clearance") or {"axis": "z"})
+    monkeypatch.setattr(grbl_service, "_get_home_xy_axis_order", lambda: ["x", "y"])
+    monkeypatch.setattr(grbl_service, "_home_xy_axis", lambda axis: calls.append(f"xy_{axis}") or {"axis": axis})
+    monkeypatch.setattr(grbl_service, "_home_z_axis", lambda: calls.append("z_home") or {"axis": "z"})
+    monkeypatch.setattr(grbl_service, "_zero_work_position", lambda include_z: calls.append(f"zero_{include_z}") or [])
+
+    result = home_axes_to_limits()
+
+    assert calls == ["unlock", "limits", "z_clearance", "xy_x", "xy_y", "z_home", "zero_True"]
+    assert result["action"] == "home_axes_to_limits"
+    assert result["sequence"] == ["z_clearance", "home_xy", "home_z"]
+    assert result["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
 
 
 def test_manual_xy_move_omits_zero_y_axis(monkeypatch):

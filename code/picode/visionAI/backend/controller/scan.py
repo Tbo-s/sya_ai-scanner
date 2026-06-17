@@ -36,7 +36,7 @@ async def start_scan(payload: StartScanRequest):
         device_model=payload.device_model,
         max_value_eur=payload.max_value_eur,
     )
-    return {"session_id": session.session_id, "status": session.status}
+    return {"session_id": session.session_id, "status": session.status, "state": session.state}
 
 
 @router.post("/scan/confirm", tags=["Scan"])

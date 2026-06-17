@@ -9,6 +9,7 @@ import serial  # type: ignore
 from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     get_grbl_arm_status,
+    home_axes_to_limits,
     home_xy_to_limits,
     is_safe_grbl_command as service_is_safe_grbl_command,
     manual_xy_move,
@@ -392,7 +393,7 @@ def grbl_unlock():
 
 @router.post("/arduino/grbl/home", tags=["Arduino"])
 def grbl_home():
-    return _send_grbl("$H")
+    return home_axes_to_limits()
 
 
 @router.post("/arduino/grbl/home-xy", tags=["Arduino"])

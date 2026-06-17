@@ -61,15 +61,28 @@ Ondersteunde commando's in de Python-code:
 - `VACUUM_ON`
 - `VACUUM_OFF`
 
-Verwachte responses:
+Stopper-switches op de Leonardo:
 
-- `GATE_OPEN_DONE`
-- `GATE_CLOSE_DONE`
-- `TRAY_OUT_DONE`
-- `TRAY_IN_DONE`
+- bovenste gate-stopper: `A4`
+- onderste gate-stopper: `A5`
+- lade-uit-stopper: `D4`
+- lade-in-stopper: `D5`
+- alle stopper-switches zijn normally closed en gebruiken `INPUT_PULLUP`
+- sluit elke switch naar `GND`: niet geraakt = `LOW`, stopper geraakt/contact open = `HIGH`
+
+Belangrijke responses:
+
+- `ACK:GATE_OPEN`
+- `ACK:GATE_CLOSE`
+- `ACK:TRAY_OUT`
+- `ACK:TRAY_IN`
+- `ACK:STATUS,gateState=...,gatePos=...,trayState=...,trayPos=...`
 - `GATE_POS=UP`
 - `GATE_POS=DOWN`
-- `ERROR:...`
+- `ERR:...`
+
+De backend bepaalt of een gatebeweging klaar is via `STATUS`: `gateState=0` en
+`gatePos=UP` of `gatePos=DOWN`.
 
 De Leonardo-logica zit vooral in:
 
@@ -206,11 +219,19 @@ Belangrijkste variabelen:
 - `APP_GRBL_BACK_Y`
 - `APP_GRBL_Z_PICKUP`
 - `APP_GRBL_Z_TRAVEL`
+- `APP_GRBL_HOME_Z_CLEARANCE`
+- `APP_GRBL_HOME_Z_STEP`
+- `APP_GRBL_HOME_Z_SEARCH_DISTANCE`
+- `APP_GRBL_HOME_Z_FEED_RATE`
+- `APP_GRBL_Z_LIMIT_TOWARD_ZERO_SIGN`
 - `APP_ARM_DISTANCE_THRESHOLD_CM`
 - `APP_GATE_MOVE_TIMEOUT_S`
 - `APP_TRAY_MOVE_TIMEOUT_S`
 - `APP_USER_CONFIRM_TIMEOUT_S`
 - `APP_MACHINE_SAFE_IDLE_ON_BOOT`
+- `APP_DEVICE_LOOKUP_API_ENABLED`
+- `APP_DEVICE_LOOKUP_API_URL`
+- `APP_DEVICE_LOOKUP_API_TIMEOUT_S`
 - `APP_AI_DAMAGE_API_MOCK`
 - `APP_AI_DAMAGE_API_URL`
 
@@ -384,12 +405,13 @@ Belangrijke functies:
 
 ### 7.6 Device lookup / pricing mock
 
-[`backend/controller/device_lookup.py`](/Users/tbo/Desktop/github/sya_ai-scanner/code/picode/visionAI/backend/controller/device_lookup.py) gebruikt momenteel een lokale JSON lookup om een toesteltype en maximumwaarde te geven.
+[`backend/controller/device_lookup.py`](/Users/tbo/Desktop/github/sya_ai-scanner/code/picode/visionAI/backend/controller/device_lookup.py) gebruikt standaard een lokale JSON lookup om een toesteltype, grootte en maximumwaarde te geven.
+Zet `APP_DEVICE_LOOKUP_API_ENABLED=1` en `APP_DEVICE_LOOKUP_API_URL=...` om later een echte IMEI/product-API aan te sluiten.
 
 [`backend/services/ai_damage_service.py`](/Users/tbo/Desktop/github/sya_ai-scanner/code/picode/visionAI/backend/services/ai_damage_service.py) geeft:
 
 - mock-resultaten als `APP_AI_DAMAGE_API_MOCK=1`
-- echte API-calls als `APP_AI_DAMAGE_API_MOCK=0`
+- echte API-calls met IMEI, sessie, maximumwaarde en alle foto's als `APP_AI_DAMAGE_API_MOCK=0`
 
 ## 8. API Endpoints
 
@@ -399,6 +421,12 @@ Belangrijke functies:
 - `POST /api/scan/confirm`
 - `POST /api/scan/abort`
 - `GET /api/scan/status`
+
+De automatische UI-flow gebruikt een expliciete state machine in plaats van losse
+stapnummers: `BOOT`, `WELCOME`, `IMEI_SCAN`, `DEVICE_LOOKUP`, `WAIT_POWER_OFF`,
+`LOAD_DEVICE`, `CLOSE_BOX`, `CAPTURE_FRONT`, `CAPTURE_BACK`, `UPLOAD_RESULTS`,
+`RETURN_DEVICE`, `SHOW_PRICE`, `DONE`, `ERROR` en `EMERGENCY_STOP`. Hardware-substeps
+worden alleen nog als detailinformatie meegestuurd via websocket-events.
 
 ### Camera
 
@@ -424,6 +452,7 @@ Belangrijke functies:
 - `POST /api/arduino/grbl/command`
 - `POST /api/arduino/grbl/unlock`
 - `POST /api/arduino/grbl/home`
+- `POST /api/arduino/grbl/home-xy`
 - `POST /api/arduino/grbl/stop`
 - `POST /api/arduino/grbl/post-flow`
 - `GET /api/arduino/ports`
@@ -491,6 +520,10 @@ curl -X POST http://127.0.0.1:3000/api/arduino/grbl/unlock
 curl -X POST http://127.0.0.1:3000/api/arduino/grbl/home
 ```
 
+`/api/arduino/grbl/home` voert de volledige arm-homeflow uit: Z eerst `+2 mm`,
+daarna X/Y naar hun limits, daarna Z in stappen van `-1 mm` tot de Z-limit onderaan
+geraakt wordt. De exacte waarden zijn configureerbaar met `APP_GRBL_HOME_Z_*`.
+
 Frontend build:
 
 ```bash
@@ -525,6 +558,7 @@ Praktisch:
 - test daarna met dummy toestel
 - pas daarna met echte smartphone
 - zet `APP_AI_DAMAGE_API_MOCK=1` tijdens mechanische integratie
+- zet `APP_DEVICE_LOOKUP_API_ENABLED=0` zolang de echte IMEI/product-API nog niet bestaat
 
 ## 12. Belangrijke Opmerkingen
 

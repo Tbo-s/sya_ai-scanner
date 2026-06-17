@@ -1,4 +1,5 @@
 import atexit
+import math
 import os
 import re
 import threading
@@ -21,6 +22,8 @@ _ARM_XY_POSITION: dict[str, Optional[float]] = {"x": None, "y": None}
 _ARM_HOMED = False
 _LAST_GRBL_STATUS: Optional[dict[str, Any]] = None
 _LAST_GRBL_STATUS_AT: Optional[float] = None
+_LIMIT_AXES = ("x", "y", "z")
+_XY_AXES = ("x", "y")
 
 
 def _get_grbl_port() -> str:
@@ -107,9 +110,33 @@ def _get_home_xy_axis_order() -> list[str]:
     return order or ["x", "y"]
 
 
+def _get_home_z_clearance() -> float:
+    return abs(float(os.getenv("APP_GRBL_HOME_Z_CLEARANCE", "2.0")))
+
+
+def _get_home_z_step() -> float:
+    return abs(float(os.getenv("APP_GRBL_HOME_Z_STEP", "1.0")))
+
+
+def _get_home_z_search_distance() -> float:
+    return abs(float(os.getenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "100.0")))
+
+
+def _get_home_z_feed_rate() -> int:
+    return int(os.getenv("APP_GRBL_HOME_Z_FEED_RATE", str(_get_manual_z_feed_rate())))
+
+
 def _get_limit_toward_zero_sign(axis: str) -> int:
     raw = os.getenv(f"APP_GRBL_{axis.upper()}_LIMIT_TOWARD_ZERO_SIGN", "-1").strip().lower()
     return 1 if raw in {"1", "+1", "+", "positive", "pos"} else -1
+
+
+def _limit_defaults() -> dict[str, bool]:
+    return {axis: False for axis in _LIMIT_AXES}
+
+
+def _limit_toward_zero_signs() -> dict[str, int]:
+    return {axis: _get_limit_toward_zero_sign(axis.upper()) for axis in _LIMIT_AXES}
 
 
 def _get_limit_pin_mode() -> str:
@@ -196,14 +223,14 @@ def _parse_limit_state_from_pin_field(pin_state: str, pin_field_seen: bool) -> t
     mode = _get_limit_pin_mode()
     limits: dict[str, bool] = {}
 
-    for axis in ("x", "y"):
+    for axis in _LIMIT_AXES:
         pin_present = axis.upper() in pins
         if mode == "active_absent":
             limits[axis] = not pin_present if pin_field_seen else False
         else:
             limits[axis] = pin_present
 
-    return limits, [axis for axis in ("x", "y") if limits[axis]]
+    return limits, [axis for axis in _LIMIT_AXES if limits[axis]]
 
 
 def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
@@ -223,7 +250,7 @@ def _parse_grbl_status_line(line: str) -> Optional[dict[str, Any]]:
         "pin_state": "",
         "pin_state_seen": False,
         "limit_axes": [],
-        "limits": {"x": False, "y": False},
+        "limits": _limit_defaults(),
     }
 
     pin_state = ""
@@ -279,23 +306,29 @@ def _status_position(status: Optional[dict[str, Any]]) -> dict[str, Optional[flo
         tracked = dict(_ARM_XY_POSITION)
         homed = _ARM_HOMED
 
-    position: dict[str, Optional[float]] = {"x": None, "y": None}
+    position: dict[str, Optional[float]] = {"x": None, "y": None, "z": None}
     if not status:
         return {
             "x": tracked.get("x"),
             "y": tracked.get("y"),
+            "z": None,
         }
 
     limits = status.get("limits") or {}
     grbl_position = status.get("work_position") or status.get("machine_position") or {}
 
-    for axis in ("x", "y"):
+    for axis in _XY_AXES:
         if homed and limits.get(axis):
             position[axis] = 0.0
         elif tracked.get(axis) is not None:
             position[axis] = tracked[axis]
         elif isinstance(grbl_position, dict) and grbl_position.get(axis) is not None:
             position[axis] = max(0.0, float(grbl_position[axis]))
+
+    if limits.get("z"):
+        position["z"] = 0.0
+    elif isinstance(grbl_position, dict) and grbl_position.get("z") is not None:
+        position["z"] = max(0.0, float(grbl_position["z"]))
 
     return position
 
@@ -308,7 +341,7 @@ def _apply_status_limits_to_tracked_position(status: Optional[dict[str, Any]]) -
     with _ARM_POSITION_LOCK:
         if not _ARM_HOMED:
             return
-        for axis in ("x", "y"):
+        for axis in _XY_AXES:
             if limits.get(axis):
                 _ARM_XY_POSITION[axis] = 0.0
 
@@ -324,13 +357,12 @@ def _cache_grbl_status(status: dict[str, Any]) -> None:
         "pin_state": status.get("pin_state", ""),
         "pin_state_seen": bool(status.get("pin_state_seen")),
         "limit_axes": list(status.get("limit_axes") or []),
-        "limits": dict(status.get("limits") or {"x": False, "y": False}),
+        "limits": dict(status.get("limits") or _limit_defaults()),
         "position": dict(status.get("position") or {}),
         "homed": bool(status.get("homed")),
         "soft_limits": dict(status.get("soft_limits") or _xy_soft_limits()),
         "limit_toward_zero_sign": dict(
-            status.get("limit_toward_zero_sign")
-            or {"x": _get_limit_toward_zero_sign("X"), "y": _get_limit_toward_zero_sign("Y")}
+            status.get("limit_toward_zero_sign") or _limit_toward_zero_signs()
         ),
         "limit_pin_mode": status.get("limit_pin_mode", _get_limit_pin_mode()),
         "response": list(status.get("response") or []),
@@ -343,9 +375,11 @@ def _build_cached_grbl_status(reason: str) -> dict[str, Any]:
     tracked_position = _status_position(None)
 
     position = dict(cached.get("position") or {})
-    for axis in ("x", "y"):
+    for axis in _XY_AXES:
         if position.get(axis) is None:
             position[axis] = tracked_position.get(axis)
+    if position.get("z") is None:
+        position["z"] = tracked_position.get("z")
 
     with _ARM_POSITION_LOCK:
         homed = _ARM_HOMED
@@ -362,13 +396,12 @@ def _build_cached_grbl_status(reason: str) -> dict[str, Any]:
         "pin_state": cached.get("pin_state", ""),
         "pin_state_seen": bool(cached.get("pin_state_seen")),
         "limit_axes": list(cached.get("limit_axes") or []),
-        "limits": dict(cached.get("limits") or {"x": False, "y": False}),
+        "limits": dict(cached.get("limits") or _limit_defaults()),
         "position": position,
         "homed": homed,
         "soft_limits": dict(cached.get("soft_limits") or _xy_soft_limits()),
         "limit_toward_zero_sign": dict(
-            cached.get("limit_toward_zero_sign")
-            or {"x": _get_limit_toward_zero_sign("X"), "y": _get_limit_toward_zero_sign("Y")}
+            cached.get("limit_toward_zero_sign") or _limit_toward_zero_signs()
         ),
         "limit_pin_mode": cached.get("limit_pin_mode", _get_limit_pin_mode()),
         "response": list(cached.get("response") or []),
@@ -878,10 +911,7 @@ def get_grbl_arm_status() -> dict[str, Any]:
             with _ARM_POSITION_LOCK:
                 status["homed"] = _ARM_HOMED
             status["soft_limits"] = _xy_soft_limits()
-            status["limit_toward_zero_sign"] = {
-                "x": _get_limit_toward_zero_sign("X"),
-                "y": _get_limit_toward_zero_sign("Y"),
-            }
+            status["limit_toward_zero_sign"] = _limit_toward_zero_signs()
             status["limit_pin_mode"] = _get_limit_pin_mode()
             status["cached"] = False
             status["stale"] = False
@@ -959,15 +989,143 @@ def _home_xy_axis(axis: str) -> dict[str, Any]:
     }
 
 
+def _unlock_grbl_if_needed() -> Optional[dict[str, Any]]:
+    try:
+        return send_grbl("$X", wait_for_ok=True)
+    except HTTPException:
+        # $X is only needed when the controller booted in alarm/lock state.
+        return None
+
+
+def _home_z_clearance() -> dict[str, Any]:
+    clearance = _get_home_z_clearance()
+    feed_rate = _get_home_z_feed_rate()
+    clearance_delta = -_get_limit_toward_zero_sign("Z") * clearance
+    if clearance <= 1e-9:
+        return {
+            "axis": "z",
+            "action": "home_z_clearance",
+            "skipped": True,
+            "clearance": 0.0,
+            "delta": 0.0,
+            "feed_rate": feed_rate,
+            "results": [],
+        }
+
+    return {
+        "axis": "z",
+        "action": "home_z_clearance",
+        "skipped": False,
+        "clearance": clearance,
+        "delta": clearance_delta,
+        "feed_rate": feed_rate,
+        "results": _run_grbl_commands(
+            [
+                ("G21", True),
+                ("G91", True),
+                (f"G1 Z{clearance_delta} F{feed_rate}", True),
+                ("G90", True),
+            ],
+            wait_for_idle=True,
+        ),
+    }
+
+
+def _home_z_axis() -> dict[str, Any]:
+    status = get_grbl_arm_status()
+    if (status.get("limits") or {}).get("z"):
+        return {
+            "axis": "z",
+            "already_at_limit": True,
+            "stopped_by_limit": True,
+            "limit_axes": ["z"],
+            "status": status,
+            "steps": 0,
+            "distance": 0.0,
+            "step_reports": [],
+        }
+
+    feed_rate = _get_home_z_feed_rate()
+    step_size = _get_home_z_step()
+    search_distance = _get_home_z_search_distance()
+    if step_size <= 1e-9:
+        raise HTTPException(status_code=400, detail="Z homing step must be greater than 0.")
+
+    home_direction = _get_limit_toward_zero_sign("Z")
+    max_steps = max(1, math.ceil(search_distance / step_size))
+    moved_distance = 0.0
+    step_reports = []
+
+    for step_index in range(1, max_steps + 1):
+        remaining_distance = max(0.0, search_distance - moved_distance)
+        if remaining_distance <= 1e-9:
+            break
+
+        delta_z = home_direction * min(step_size, remaining_distance)
+        results = _run_grbl_commands(
+            [
+                ("G21", True),
+                ("G91", True),
+                (f"G1 Z{delta_z} F{feed_rate}", True),
+                ("G90", True),
+            ],
+            wait_for_idle=True,
+            observe_limit_axes={"z"},
+        )
+        limit_axes = _extract_limit_axes_from_results(results)
+        moved_distance += abs(delta_z)
+        step_report = {
+            "step": step_index,
+            "delta": delta_z,
+            "distance": moved_distance,
+            "limit_axes": sorted(limit_axes),
+            "results": results,
+        }
+        step_reports.append(step_report)
+
+        if "z" in limit_axes:
+            return {
+                "axis": "z",
+                "already_at_limit": False,
+                "stopped_by_limit": True,
+                "limit_axes": sorted(limit_axes),
+                "feed_rate": feed_rate,
+                "direction": home_direction,
+                "step_size": step_size,
+                "steps": step_index,
+                "distance": moved_distance,
+                "step_reports": step_reports,
+            }
+
+    try:
+        _run_grbl_commands([("G90", True)])
+    except HTTPException:
+        pass
+
+    raise HTTPException(
+        status_code=504,
+        detail=f"Z homing failed: Z limit was not reached within {search_distance} mm.",
+    )
+
+
+def _zero_work_position(include_z: bool) -> Any:
+    command = "G10 L20 P1 X0 Y0 Z0" if include_z else "G10 L20 P1 X0 Y0"
+    try:
+        return _run_grbl_commands(
+            [
+                (command, True),
+                ("G90", True),
+            ]
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+
 def home_xy_to_limits() -> dict[str, Any]:
     _set_arm_unhomed()
     axis_reports = []
 
-    try:
-        send_grbl("$X", wait_for_ok=True)
-    except HTTPException:
-        # $X is only needed when the controller booted in alarm/lock state.
-        pass
+    unlock_result = _unlock_grbl_if_needed()
 
     nc_limit_setting = ensure_nc_limit_pin_setting()
 
@@ -975,22 +1133,43 @@ def home_xy_to_limits() -> dict[str, Any]:
         axis_reports.append(_home_xy_axis(axis))
 
     _set_arm_homed_zero()
-    zero_result = None
-    try:
-        zero_result = _run_grbl_commands(
-            [
-                ("G10 L20 P1 X0 Y0", True),
-                ("G90", True),
-            ]
-        )
-    except HTTPException as exc:
-        zero_result = {"error": exc.detail}
+    zero_result = _zero_work_position(include_z=False)
 
     return {
         "action": "home_xy_to_limits",
         "homed": True,
         "position": {"x": 0.0, "y": 0.0},
         "axis_reports": axis_reports,
+        "unlock_result": unlock_result,
+        "nc_limit_setting": nc_limit_setting,
+        "zero_result": zero_result,
+    }
+
+
+def home_axes_to_limits() -> dict[str, Any]:
+    _set_arm_unhomed()
+    axis_reports = []
+
+    unlock_result = _unlock_grbl_if_needed()
+    nc_limit_setting = ensure_nc_limit_pin_setting()
+    z_clearance = _home_z_clearance()
+
+    for axis in _get_home_xy_axis_order():
+        axis_reports.append(_home_xy_axis(axis))
+
+    _set_arm_homed_zero()
+    z_report = _home_z_axis()
+    zero_result = _zero_work_position(include_z=True)
+
+    return {
+        "action": "home_axes_to_limits",
+        "homed": True,
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "sequence": ["z_clearance", "home_xy", "home_z"],
+        "z_clearance": z_clearance,
+        "axis_reports": axis_reports,
+        "z_report": z_report,
+        "unlock_result": unlock_result,
         "nc_limit_setting": nc_limit_setting,
         "zero_result": zero_result,
     }

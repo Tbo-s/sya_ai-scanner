@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import requests
+
 
 router = APIRouter()
 
@@ -22,6 +24,18 @@ def _get_lookup_data_path() -> Path:
     if configured:
         return Path(configured)
     return DEFAULT_LOOKUP_PATH
+
+
+def _is_enabled(env_name: str, default: str = "0") -> bool:
+    return os.getenv(env_name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_device_lookup_api_url() -> str:
+    return os.getenv("APP_DEVICE_LOOKUP_API_URL", "http://localhost:4000/api/v1/device-lookup").strip()
+
+
+def _get_device_lookup_api_timeout_s() -> float:
+    return max(0.5, float(os.getenv("APP_DEVICE_LOOKUP_API_TIMEOUT_S", "15")))
 
 
 def _normalize_imei(imei: str) -> str:
@@ -55,7 +69,35 @@ def _read_lookup_data() -> dict[str, Any]:
 def _extract_device_fields(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "model": str(entry.get("model", "Unknown device")),
+        "product_type": str(entry.get("product_type", entry.get("productType", ""))),
+        "size": str(entry.get("size", entry.get("storage", entry.get("capacity", "")))),
         "max_value_eur": float(entry.get("max_value_eur", entry.get("max_value", 0))),
+    }
+
+
+def _lookup_device_from_api(imei: str) -> dict[str, Any]:
+    api_url = _get_device_lookup_api_url()
+    if not api_url:
+        raise HTTPException(status_code=500, detail="Device lookup API URL is not configured.")
+
+    try:
+        response = requests.post(
+            api_url,
+            json={"imei": imei},
+            timeout=_get_device_lookup_api_timeout_s(),
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Device lookup API error: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="Device lookup API returned invalid JSON.")
+
+    return {
+        "found": bool(payload.get("found", True)),
+        "source": "api",
+        **_extract_device_fields(payload),
     }
 
 
@@ -80,13 +122,18 @@ def _resolve_device(imei: str, data: dict[str, Any]) -> dict[str, Any]:
 @router.post("/device/lookup", tags=["Device"])
 def lookup_device(payload: DeviceLookupRequest):
     normalized_imei = _normalize_imei(payload.imei)
-    data = _read_lookup_data()
-    resolved = _resolve_device(normalized_imei, data)
+    if _is_enabled("APP_DEVICE_LOOKUP_API_ENABLED", "0"):
+        resolved = _lookup_device_from_api(normalized_imei)
+    else:
+        data = _read_lookup_data()
+        resolved = _resolve_device(normalized_imei, data)
 
     return {
         "imei": normalized_imei,
         "found": resolved["found"],
         "source": resolved["source"],
         "model": resolved["model"],
+        "product_type": resolved.get("product_type", ""),
+        "size": resolved.get("size", ""),
         "max_value_eur": resolved["max_value_eur"],
     }

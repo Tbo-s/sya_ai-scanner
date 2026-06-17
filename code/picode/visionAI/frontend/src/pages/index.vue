@@ -1,5 +1,5 @@
 <template>
-  <v-container class="page-container">
+  <v-container :class="['page-container', { 'page-container--manual': appMode === 'manual' && step === 0 }]">
     <v-btn
       v-if="showBackButton"
       icon="mdi-arrow-left"
@@ -8,11 +8,58 @@
       @click="goBack"
     />
 
-    <template v-if="step === 0">
+    <template v-if="!appMode">
+      <div class="mode-selection">
+        <div class="title">Kies modus</div>
+        <div class="mode-card-grid">
+          <v-btn
+            class="mode-card"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-tune-variant"
+            @click="selectMode('manual')"
+          >
+            Manuele bediening
+          </v-btn>
+          <v-btn
+            class="mode-card"
+            color="success"
+            variant="tonal"
+            prepend-icon="mdi-play-circle"
+            @click="selectMode('auto')"
+          >
+            Automatische flow
+          </v-btn>
+        </div>
+      </div>
+    </template>
+
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.WELCOME && welcomeStep === 0">
       <div v-if="testSpinActive" class="secondary-text">NEMA testspin actief. Druk op Start om te stoppen en verder te gaan.</div>
       <div v-if="testSpinError" class="error-text">{{ testSpinError }}</div>
+      <div class="auto-start-panel">
+        <div class="title">Automatische flow</div>
+        <div class="secondary-text">Begeleide inname, IMEI-scan, fotoreeks en prijsvoorstel.</div>
+      </div>
       <div class="action-row start-controls">
         <v-btn color="primary" size="x-large" :disabled="Boolean(manualControlBusy)" @click="startFlow">Start</v-btn>
+        <v-btn
+          color="error"
+          variant="outlined"
+          prepend-icon="mdi-stop-circle"
+          :loading="isManualActionBusy('stop-all')"
+          @click="emergencyStopAll"
+        >
+          Stop Everything
+        </v-btn>
+      </div>
+    </template>
+
+    <template v-else-if="appMode === 'manual' && step === 0">
+      <div class="mode-header">
+        <div class="title">Manuele bediening</div>
+      </div>
+      <div class="action-row start-controls">
         <v-btn
           color="error"
           variant="outlined"
@@ -132,11 +179,11 @@
             color="primary"
             variant="tonal"
             prepend-icon="mdi-home-map-marker"
-            :loading="isManualActionBusy('xy:home')"
+            :loading="isManualActionBusy('axes:home')"
             :disabled="Boolean(manualControlBusy)"
             @click="homeArm"
           >
-            Home XY naar 0,0
+            Home X/Y/Z naar 0
           </v-btn>
         </div>
         <div v-if="armStatusError" class="error-text">{{ armStatusError }}</div>
@@ -437,21 +484,22 @@
       <div v-if="manualControlSuccess" class="secondary-text">{{ manualControlSuccess }}</div>
     </template>
 
-    <template v-else-if="step === 1">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.WELCOME && welcomeStep === 1">
       <div class="prompt">Screen protector en case zijn verwijderd?</div>
       <transition name="fade">
         <v-btn v-if="showPrimaryAction" color="primary" @click="nextStep">OK</v-btn>
       </transition>
     </template>
 
-    <template v-else-if="step === 2">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.WELCOME && welcomeStep === 2">
       <div class="prompt">Is het toestel proper?</div>
+      <div class="secondary-text">Reinig het toestel grondig als er vettige vingers, stof of strepen zichtbaar zijn.</div>
       <transition name="fade">
         <v-btn v-if="showPrimaryAction" color="primary" @click="nextStep">OK</v-btn>
       </transition>
     </template>
 
-    <template v-else-if="step === 3">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.IMEI_SCAN">
       <div class="prompt">Toets *#06# in op je toestel voor het IMEI-nummer.</div>
 
       <transition name="fade">
@@ -494,47 +542,37 @@
       <v-btn v-if="showCamera" color="secondary" variant="outlined" @click="stopScanCamera">Stop camera</v-btn>
     </template>
 
-    <template v-else-if="step === 4">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.DEVICE_LOOKUP">
       <div class="title">Toestel herkend</div>
       <div class="subtitle">Model: {{ deviceModel || "Onbekend toestel" }}</div>
-      <div class="subtitle">Maximale waarde: EUR {{ formattedDeviceMaxValue }}</div>
-
-      <div class="action-row">
-        <v-btn color="success" :loading="gateCommandBusy" @click="sendGateCommand('GATE_OPEN')">Test GATE_OPEN</v-btn>
-        <v-btn color="error" variant="outlined" :loading="gateCommandBusy" @click="sendGateCommand('GATE_CLOSE')">Test GATE_CLOSE</v-btn>
-        <v-btn color="info" variant="tonal" :loading="piCaptureBusy" @click="capturePiPhoto('post_imei')">Neem foto (Pi camera)</v-btn>
-      </div>
-
-      <div class="action-row">
-        <v-btn color="primary" variant="tonal" :loading="gatePositionBusy" @click="fetchGatePosition">Lees gate positie</v-btn>
-        <div class="secondary-text">Gate positie: <strong>{{ gatePosition || "Onbekend" }}</strong></div>
-      </div>
-
-      <div v-if="gateCommandError" class="error-text">{{ gateCommandError }}</div>
+      <div class="subtitle">Producttype: {{ deviceProductType || "Onbekend" }}</div>
+      <div class="subtitle">Grootte: {{ deviceSize || "Onbekend" }}</div>
       <div v-if="deviceLookupError" class="error-text">{{ deviceLookupError }}</div>
-      <div v-if="piCaptureError" class="error-text">{{ piCaptureError }}</div>
-      <div v-if="piCaptureSuccess" class="secondary-text">{{ piCaptureSuccess }}</div>
 
-      <v-btn color="primary" @click="step = 5">Volgende</v-btn>
+      <div class="title">Max prijs van toestel: EUR {{ formattedDeviceMaxValue }}</div>
+      <div class="subtitle">{{ deviceTakeoverMessage }}</div>
+      <v-btn color="primary" @click="confirmDeviceLookup">OK</v-btn>
     </template>
 
-    <template v-else-if="step === 5">
-      <div class="title">Max prijs van toestel = EUR {{ formattedDeviceMaxValue }}</div>
-      <v-btn color="primary" @click="step = 6">OK</v-btn>
-    </template>
-
-    <template v-else-if="step === 6">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.WAIT_POWER_OFF">
       <div class="title">Schakel het toestel volledig uit.</div>
       <v-btn color="primary" :loading="scanBusy" @click="startMachineScan">Toestel is uitgeschakeld</v-btn>
       <div v-if="scanError" class="error-text">{{ scanError }}</div>
     </template>
 
-    <template v-else-if="step === 7">
-      <div v-if="scanStatus === 'failed'" class="overlay">
+    <template v-else-if="appMode === 'auto' && isMachineFlowState">
+      <div v-if="flowState === FLOW_STATES.EMERGENCY_STOP" class="overlay">
+        <v-icon size="64" color="error">mdi-stop-circle</v-icon>
+        <div class="title">Noodstop uitgevoerd</div>
+        <div class="error-text">{{ scanError || "Flow werd afgebroken." }}</div>
+        <v-btn color="primary" @click="resetFlow">Terug naar start</v-btn>
+      </div>
+
+      <div v-else-if="flowState === FLOW_STATES.ERROR || scanStatus === 'failed'" class="overlay">
         <v-icon size="64" color="error">mdi-alert-circle</v-icon>
         <div class="title">Er is een fout opgetreden</div>
         <div class="error-text">{{ scanError || "Onbekende fout" }}</div>
-        <v-btn color="error" variant="outlined" @click="abortScan">Afbreken</v-btn>
+        <v-btn color="primary" @click="resetFlow">Terug naar start</v-btn>
       </div>
 
       <template v-else>
@@ -548,9 +586,9 @@
         </template>
 
         <template v-else>
-          <div class="prompt">Toestel wordt gescand...</div>
+          <div class="prompt">{{ currentFlowStateLabel }}</div>
           <div class="progress-area">
-            <div class="secondary-text">Stap {{ currentHwStep }}: {{ currentHwStepLabel }}</div>
+            <div class="secondary-text">{{ currentHwStepLabel }}</div>
             <v-progress-linear :model-value="progressPct" color="primary" height="8" rounded class="mt-2" />
           </div>
         </template>
@@ -559,12 +597,21 @@
       </template>
     </template>
 
-    <template v-else-if="step === 8">
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.SHOW_PRICE">
       <div class="title">Scan voltooid</div>
       <div class="subtitle">Model: {{ deviceModel || "Onbekend toestel" }}</div>
       <div class="subtitle">Grade: {{ aiResult?.grade || "-" }}</div>
       <div class="subtitle">Bod: EUR {{ finalOffer }}</div>
       <div v-if="damageDetailsText" class="secondary-text">Schade: {{ damageDetailsText }}</div>
+      <div class="decision-row">
+        <v-btn color="success" size="large" @click="completeCustomerDecision(true)">Aanvaarden</v-btn>
+        <v-btn color="error" variant="outlined" size="large" @click="completeCustomerDecision(false)">Weigeren</v-btn>
+      </div>
+    </template>
+
+    <template v-else-if="appMode === 'auto' && flowState === FLOW_STATES.DONE">
+      <div class="title">Bedankt</div>
+      <div class="subtitle">{{ customerDecisionMessage }}</div>
       <v-btn color="primary" @click="resetFlow">Nieuwe scan</v-btn>
     </template>
   </v-container>
@@ -574,6 +621,57 @@
 import axios from "axios";
 import { nextTick } from "vue";
 import { webSocketService } from "@/services/websocket";
+
+const FLOW_STATES = Object.freeze({
+  BOOT: "BOOT",
+  WELCOME: "WELCOME",
+  IMEI_SCAN: "IMEI_SCAN",
+  DEVICE_LOOKUP: "DEVICE_LOOKUP",
+  WAIT_POWER_OFF: "WAIT_POWER_OFF",
+  LOAD_DEVICE: "LOAD_DEVICE",
+  CLOSE_BOX: "CLOSE_BOX",
+  CAPTURE_FRONT: "CAPTURE_FRONT",
+  CAPTURE_BACK: "CAPTURE_BACK",
+  UPLOAD_RESULTS: "UPLOAD_RESULTS",
+  RETURN_DEVICE: "RETURN_DEVICE",
+  SHOW_PRICE: "SHOW_PRICE",
+  DONE: "DONE",
+  ERROR: "ERROR",
+  EMERGENCY_STOP: "EMERGENCY_STOP",
+});
+
+const FLOW_STATE_LABELS = Object.freeze({
+  [FLOW_STATES.BOOT]: "Opstarten",
+  [FLOW_STATES.WELCOME]: "Welkom",
+  [FLOW_STATES.IMEI_SCAN]: "IMEI scannen",
+  [FLOW_STATES.DEVICE_LOOKUP]: "Toestelgegevens ophalen",
+  [FLOW_STATES.WAIT_POWER_OFF]: "Wachten op uitschakelen",
+  [FLOW_STATES.LOAD_DEVICE]: "Toestel laden",
+  [FLOW_STATES.CLOSE_BOX]: "Box sluiten",
+  [FLOW_STATES.CAPTURE_FRONT]: "Voorkant scannen",
+  [FLOW_STATES.CAPTURE_BACK]: "Achterkant scannen",
+  [FLOW_STATES.UPLOAD_RESULTS]: "Resultaten uploaden",
+  [FLOW_STATES.RETURN_DEVICE]: "Toestel teruggeven",
+  [FLOW_STATES.SHOW_PRICE]: "Prijs tonen",
+  [FLOW_STATES.DONE]: "Afgerond",
+  [FLOW_STATES.ERROR]: "Fout",
+  [FLOW_STATES.EMERGENCY_STOP]: "Noodstop",
+});
+
+const FLOW_STATE_ORDER = [
+  FLOW_STATES.WELCOME,
+  FLOW_STATES.IMEI_SCAN,
+  FLOW_STATES.DEVICE_LOOKUP,
+  FLOW_STATES.WAIT_POWER_OFF,
+  FLOW_STATES.LOAD_DEVICE,
+  FLOW_STATES.CLOSE_BOX,
+  FLOW_STATES.CAPTURE_FRONT,
+  FLOW_STATES.CAPTURE_BACK,
+  FLOW_STATES.UPLOAD_RESULTS,
+  FLOW_STATES.RETURN_DEVICE,
+  FLOW_STATES.SHOW_PRICE,
+  FLOW_STATES.DONE,
+];
 
 const STEP_NAMES = {
   19: "Gate openen",
@@ -621,6 +719,10 @@ export default {
   name: "HomePage",
   data() {
     return {
+      FLOW_STATES,
+      appMode: "",
+      flowState: FLOW_STATES.BOOT,
+      welcomeStep: 0,
       step: 0,
       timer: null,
       showPrimaryAction: false,
@@ -629,6 +731,8 @@ export default {
       scanInterval: null,
       imeiNumber: "",
       deviceModel: "",
+      deviceProductType: "",
+      deviceSize: "",
       deviceMaxValueEur: 0,
       deviceLookupError: "",
       gateCommandBusy: false,
@@ -660,6 +764,7 @@ export default {
       aiResult: null,
       sessionId: null,
       confirmBusy: false,
+      customerDecision: "",
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
@@ -706,7 +811,18 @@ export default {
   },
   computed: {
     showBackButton() {
-      return this.step > 0 && this.step < 7;
+      if (!this.appMode) {
+        return false;
+      }
+      if (this.appMode === "manual") {
+        return true;
+      }
+      return [
+        FLOW_STATES.WELCOME,
+        FLOW_STATES.IMEI_SCAN,
+        FLOW_STATES.DEVICE_LOOKUP,
+        FLOW_STATES.WAIT_POWER_OFF,
+      ].includes(this.flowState);
     },
     cameraStreamUrl() {
       return `/api/camera/stream?t=${this.cameraKey}`;
@@ -714,19 +830,53 @@ export default {
     formattedDeviceMaxValue() {
       return Number(this.deviceMaxValueEur || 0).toFixed(2);
     },
+    deviceTakeoverMessage() {
+      return Number(this.deviceMaxValueEur || 0) > 0
+        ? "Dit toestel kan worden overgenomen."
+        : "Dit toestel kan momenteel niet worden overgenomen.";
+    },
     awaitingUser() {
       return this.scanStatus === "awaiting_user";
     },
+    currentFlowStateLabel() {
+      return FLOW_STATE_LABELS[this.flowState] || "Bezig";
+    },
     currentHwStepLabel() {
+      if (!this.currentHwStep) {
+        return this.currentFlowStateLabel;
+      }
       return STEP_NAMES[this.currentHwStep] || this.currentHwStepName || "Bezig";
     },
+    isMachineFlowState() {
+      return [
+        FLOW_STATES.LOAD_DEVICE,
+        FLOW_STATES.CLOSE_BOX,
+        FLOW_STATES.CAPTURE_FRONT,
+        FLOW_STATES.CAPTURE_BACK,
+        FLOW_STATES.UPLOAD_RESULTS,
+        FLOW_STATES.RETURN_DEVICE,
+        FLOW_STATES.ERROR,
+        FLOW_STATES.EMERGENCY_STOP,
+      ].includes(this.flowState);
+    },
     progressPct() {
-      const totalSteps = 59 - 19 + 1;
-      const current = Math.max(0, this.currentHwStep - 19);
-      return Math.round((current / totalSteps) * 100);
+      const currentIndex = FLOW_STATE_ORDER.indexOf(this.flowState);
+      if (currentIndex < 0) {
+        return 0;
+      }
+      return Math.round((currentIndex / Math.max(1, FLOW_STATE_ORDER.length - 1)) * 100);
     },
     finalOffer() {
       return Number(this.aiResult?.final_offer_eur || 0).toFixed(2);
+    },
+    customerDecisionMessage() {
+      if (this.customerDecision === "accepted") {
+        return "Het bod werd aanvaard.";
+      }
+      if (this.customerDecision === "declined") {
+        return "Het bod werd geweigerd.";
+      }
+      return "De flow is afgerond.";
     },
     damageDetailsText() {
       const details = this.aiResult?.damage_details || [];
@@ -778,24 +928,58 @@ export default {
         this.armSoftLimits = { x: 4, y: 5.5 };
       }
 
-      if (this.autoGrblTestSpinOnUiStart) {
+      if (this.autoGrblTestSpinOnUiStart && this.appMode === "auto") {
         await this.beginStartupTestSpin();
       }
     },
+    async selectMode(mode) {
+      this.resetFlow(false);
+      this.appMode = mode;
+      this.flowState = mode === "auto" ? FLOW_STATES.WELCOME : FLOW_STATES.BOOT;
+      this.welcomeStep = 0;
+      if (mode === "auto" && this.autoGrblTestSpinOnUiStart) {
+        await this.beginStartupTestSpin();
+      }
+      if (mode === "manual") {
+        await this.stopStartupTestSpin();
+        this.fetchManualStatus();
+        this.fetchArmStatus();
+      }
+    },
     async startFlow() {
+      this.appMode = "auto";
+      this.flowState = FLOW_STATES.WELCOME;
       const stopped = await this.stopStartupTestSpin();
       if (!stopped) {
         return;
       }
       this.resetFlow(false);
-      this.step = 1;
+      this.appMode = "auto";
+      this.flowState = FLOW_STATES.WELCOME;
+      this.welcomeStep = 1;
       this.startActionTimer();
     },
     nextStep() {
       this.showPrimaryAction = false;
-      this.step += 1;
-      if (this.step === 2 || this.step === 3) {
+      if (this.flowState !== FLOW_STATES.WELCOME) {
+        return;
+      }
+      if (this.welcomeStep < 2) {
+        this.welcomeStep += 1;
         this.startActionTimer();
+        return;
+      }
+
+      this.flowState = FLOW_STATES.IMEI_SCAN;
+      this.welcomeStep = 0;
+      this.startActionTimer();
+    },
+    confirmDeviceLookup() {
+      this.flowState = FLOW_STATES.WAIT_POWER_OFF;
+    },
+    setFlowState(state) {
+      if (state && FLOW_STATE_LABELS[state]) {
+        this.flowState = state;
       }
     },
     startActionTimer() {
@@ -805,7 +989,11 @@ export default {
       }, 1000);
     },
     async beginStartupTestSpin() {
-      if (this.step !== 0) {
+      if (
+        this.appMode !== "auto" ||
+        this.flowState !== FLOW_STATES.WELCOME ||
+        this.welcomeStep !== 0
+      ) {
         return;
       }
       this.testSpinError = "";
@@ -898,7 +1086,7 @@ export default {
       this.stopArmStatusPolling();
       this.fetchArmStatus();
       this.armStatusTimer = setInterval(() => {
-        if (this.step === 0 && !this.manualControlBusy) {
+        if (this.appMode === "manual" && this.step === 0 && !this.manualControlBusy) {
           this.fetchArmStatus();
         }
       }, 1500);
@@ -913,7 +1101,7 @@ export default {
       this.stopManualStatusPolling();
       this.fetchManualStatus();
       this.manualStatusTimer = setInterval(() => {
-        if (this.step === 0 && !this.manualControlBusy) {
+        if (this.appMode === "manual" && this.step === 0 && !this.manualControlBusy) {
           this.fetchManualStatus();
         }
       }, 2500);
@@ -1001,7 +1189,7 @@ export default {
         if (this.isRequestTimeout(error)) {
           return;
         }
-        if (this.step === 0) {
+        if (this.appMode === "manual" && this.step === 0) {
           this.manualControlError =
             this.stringifyErrorDetail(error?.response?.data?.detail) ||
             "Kon Leonardo status niet ophalen.";
@@ -1045,9 +1233,9 @@ export default {
     },
     async homeArm() {
       await this.runManualAction(
-        "xy:home",
-        "Arm gehomed naar 0,0.",
-        () => axios.post("/api/arduino/grbl/home-xy"),
+        "axes:home",
+        "Arm gehomed naar X/Y/Z 0.",
+        () => axios.post("/api/arduino/grbl/home"),
         (data) => {
           this.armCoordinates = {
             x: this.parseManualStatusNumber(data?.position?.x),
@@ -1172,6 +1360,7 @@ export default {
       );
     },
     async startScanCamera() {
+      this.flowState = FLOW_STATES.IMEI_SCAN;
       this.showManualImeiInput = false;
       this.manualImeiError = "";
       this.stopImeiDetection();
@@ -1413,20 +1602,22 @@ export default {
       await this.stopScanCamera();
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
+      this.flowState = FLOW_STATES.DEVICE_LOOKUP;
       await this.lookupDeviceFromImei(this.imeiNumber);
-      this.step = 4;
-      await this.sendGateCommand("GATE_OPEN");
-      await this.fetchGatePosition();
     },
     async lookupDeviceFromImei(imei) {
       this.deviceLookupError = "";
       try {
         const response = await axios.post("/api/device/lookup", { imei });
         this.deviceModel = response.data?.model || "Unknown device";
+        this.deviceProductType = response.data?.product_type || "";
+        this.deviceSize = response.data?.size || "";
         this.deviceMaxValueEur = Number(response.data?.max_value_eur || 0);
       } catch (error) {
         this.deviceLookupError = error?.response?.data?.detail || "Kon toestelgegevens niet ophalen.";
         this.deviceModel = "Unknown device";
+        this.deviceProductType = "";
+        this.deviceSize = "";
         this.deviceMaxValueEur = 0;
       }
     },
@@ -1481,19 +1672,23 @@ export default {
         });
         this.sessionId = response.data?.session_id || null;
         this.scanStatus = "running";
-        this.step = 7;
+        this.flowState = response.data?.state || FLOW_STATES.LOAD_DEVICE;
       } catch (error) {
         this.scanError = error?.response?.data?.detail || "Kon scan niet starten.";
+        this.flowState = FLOW_STATES.ERROR;
       } finally {
         this.scanBusy = false;
       }
     },
     handleScanEvent(event) {
-      const { type, step, step_name, data } = event;
+      const { type, state, step, step_name, data } = event;
+      this.setFlowState(state || data?.state);
       this.currentHwStep = step;
       this.currentHwStepName = step_name;
       if (type === "awaiting_user") {
         this.scanStatus = "awaiting_user";
+      } else if (type === "state_changed") {
+        this.scanStatus = "running";
       } else if (type === "step_complete") {
         this.scanStatus = "running";
         if (step_name === "ai_done" && data) {
@@ -1502,11 +1697,18 @@ export default {
       } else if (type === "scan_complete") {
         this.scanStatus = "complete";
         this.aiResult = data?.ai_result || this.aiResult;
-        this.step = 8;
+        this.flowState = FLOW_STATES.SHOW_PRICE;
       } else if (type === "scan_failed") {
         this.scanStatus = "failed";
         this.scanError = data?.error || data?.reason || "Onbekende fout";
+        this.flowState = state === FLOW_STATES.EMERGENCY_STOP
+          ? FLOW_STATES.EMERGENCY_STOP
+          : FLOW_STATES.ERROR;
       }
+    },
+    completeCustomerDecision(accepted) {
+      this.customerDecision = accepted ? "accepted" : "declined";
+      this.flowState = FLOW_STATES.DONE;
     },
     async confirmScan() {
       this.confirmBusy = true;
@@ -1525,21 +1727,55 @@ export default {
         this.scanError = error?.response?.data?.detail || "Afbreken mislukt.";
         return;
       }
-      this.resetFlow();
+      this.scanStatus = "failed";
+      this.scanError = "Flow werd afgebroken.";
+      this.flowState = FLOW_STATES.EMERGENCY_STOP;
     },
     async goBack() {
       clearTimeout(this.timer);
       this.stopImeiDetection();
       await this.stopScanCamera();
-      if (this.step > 0) {
-        this.step -= 1;
+      if (this.appMode === "manual") {
+        await this.stopStartupTestSpin();
+        this.resetFlow(false);
+        this.appMode = "";
+        this.flowState = FLOW_STATES.BOOT;
+        return;
       }
+
       this.showPrimaryAction = false;
       this.showManualImeiInput = false;
       this.manualImeiInput = "";
       this.manualImeiError = "";
-      if (this.step === 1 || this.step === 2 || this.step === 3) {
+
+      if (this.flowState === FLOW_STATES.WELCOME) {
+        if (this.welcomeStep > 0) {
+          this.welcomeStep -= 1;
+          this.startActionTimer();
+          return;
+        }
+        await this.stopStartupTestSpin();
+        this.resetFlow(false);
+        this.appMode = "";
+        this.flowState = FLOW_STATES.BOOT;
+        return;
+      }
+
+      if (this.flowState === FLOW_STATES.IMEI_SCAN) {
+        this.flowState = FLOW_STATES.WELCOME;
+        this.welcomeStep = 2;
         this.startActionTimer();
+        return;
+      }
+
+      if (this.flowState === FLOW_STATES.DEVICE_LOOKUP) {
+        this.flowState = FLOW_STATES.IMEI_SCAN;
+        this.startActionTimer();
+        return;
+      }
+
+      if (this.flowState === FLOW_STATES.WAIT_POWER_OFF) {
+        this.flowState = FLOW_STATES.DEVICE_LOOKUP;
       }
     },
     resetFlow(restartTestSpin = true) {
@@ -1548,11 +1784,15 @@ export default {
       this.stopCameraViewer();
       this.toggleCamera(false);
       this.step = 0;
+      this.flowState = this.appMode === "auto" ? FLOW_STATES.WELCOME : FLOW_STATES.BOOT;
+      this.welcomeStep = 0;
       this.showPrimaryAction = false;
       this.showCamera = false;
       this.cameraKey = 0;
       this.imeiNumber = "";
       this.deviceModel = "";
+      this.deviceProductType = "";
+      this.deviceSize = "";
       this.deviceMaxValueEur = 0;
       this.deviceLookupError = "";
       this.gateCommandBusy = false;
@@ -1580,11 +1820,12 @@ export default {
       this.aiResult = null;
       this.sessionId = null;
       this.confirmBusy = false;
+      this.customerDecision = "";
       this.testSpinError = "";
       this.manualControlBusy = "";
       this.manualControlError = "";
       this.manualControlSuccess = "";
-      if (restartTestSpin && this.autoGrblTestSpinOnUiStart) {
+      if (restartTestSpin && this.appMode === "auto" && this.autoGrblTestSpinOnUiStart) {
         this.beginStartupTestSpin();
       }
       this.fetchManualStatus();
@@ -1605,6 +1846,11 @@ export default {
   justify-content: center;
   gap: 20px;
   text-align: center;
+}
+
+.page-container--manual {
+  justify-content: flex-start;
+  padding-top: 24px;
 }
 
 .back-btn {
@@ -1643,6 +1889,29 @@ export default {
 
 .start-controls {
   align-items: center;
+}
+
+.mode-selection,
+.auto-start-panel,
+.mode-header {
+  width: 100%;
+  max-width: 780px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.mode-card-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.mode-card {
+  min-height: 84px;
+  font-size: 18px;
 }
 
 .control-grid {
@@ -1853,6 +2122,13 @@ export default {
   align-items: center;
   justify-content: center;
   margin-top: 14px;
+}
+
+.decision-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
 }
 
 .camera-stream {

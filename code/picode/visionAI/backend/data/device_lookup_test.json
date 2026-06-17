@@ -2,25 +2,35 @@
   "exact": {
     "352134981213276": {
       "model": "Nothing Phone (2)",
+      "product_type": "Smartphone",
+      "size": "256GB",
       "max_value_eur": 0
     },
     "490154203237518": {
       "model": "Apple iPhone 13 128GB",
+      "product_type": "Smartphone",
+      "size": "128GB",
       "max_value_eur": 360
     }
   },
   "tac": {
     "35391805": {
       "model": "Samsung Galaxy S21 128GB",
+      "product_type": "Smartphone",
+      "size": "128GB",
       "max_value_eur": 300
     },
     "86678306": {
       "model": "Xiaomi Redmi Note 10",
+      "product_type": "Smartphone",
+      "size": "128GB",
       "max_value_eur": 110
     }
   },
   "fallback": {
     "model": "Unknown device",
+    "product_type": "",
+    "size": "",
     "max_value_eur": 0
   }
 }

@@ -86,7 +86,12 @@ def _real_result(
     try:
         response = requests.post(
             api_url,
-            json={"imei": imei, "session_id": session_id, "photos": photos_payload},
+            json={
+                "imei": imei,
+                "session_id": session_id,
+                "max_value_eur": max_value_eur,
+                "photos": photos_payload,
+            },
             timeout=30,
         )
         response.raise_for_status()
