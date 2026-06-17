@@ -370,6 +370,23 @@ def _cache_grbl_status(status: dict[str, Any]) -> None:
     _LAST_GRBL_STATUS_AT = time.time()
 
 
+def _enrich_live_grbl_status(status: dict[str, Any], startup_lines: Optional[list[str]] = None) -> dict[str, Any]:
+    if startup_lines:
+        status["startup"] = startup_lines
+    _apply_status_limits_to_tracked_position(status)
+    status["position"] = _status_position(status)
+    with _ARM_POSITION_LOCK:
+        status["homed"] = _ARM_HOMED
+    status["soft_limits"] = _xy_soft_limits()
+    status["limit_toward_zero_sign"] = _limit_toward_zero_signs()
+    status["limit_pin_mode"] = _get_limit_pin_mode()
+    status["cached"] = False
+    status["stale"] = False
+    status["cache_age_ms"] = 0
+    _cache_grbl_status(status)
+    return status
+
+
 def _build_cached_grbl_status(reason: str) -> dict[str, Any]:
     cached = dict(_LAST_GRBL_STATUS or {})
     tracked_position = _status_position(None)
@@ -794,6 +811,7 @@ def _run_grbl_commands(
     precheck_limit_axes: Optional[set[str]] = None,
     limit_stop_axes: Optional[set[str]] = None,
     observe_limit_axes: Optional[set[str]] = None,
+    require_limit_precheck: bool = False,
 ) -> list[dict[str, Any]]:
     port = _get_grbl_port()
 
@@ -815,8 +833,13 @@ def _run_grbl_commands(
                             if startup_lines:
                                 limit_result["startup"] = startup_lines
                             return [limit_result]
-                except HTTPException:
-                    # If realtime status is unavailable, still send the jog command.
+                except HTTPException as exc:
+                    if require_limit_precheck and precheck_limit_axes:
+                        raise HTTPException(
+                            status_code=exc.status_code,
+                            detail=f"Cannot verify GRBL limit switches before motion: {exc.detail}",
+                        ) from exc
+                    # If realtime status is unavailable, still send non-critical jog commands.
                     # The movement command itself will surface serial/GRBL failures.
                     pass
 
@@ -904,20 +927,7 @@ def get_grbl_arm_status() -> dict[str, Any]:
                 ser.reset_input_buffer()
 
             status = _read_grbl_status_on_serial(ser)
-            if startup_lines:
-                status["startup"] = startup_lines
-            _apply_status_limits_to_tracked_position(status)
-            status["position"] = _status_position(status)
-            with _ARM_POSITION_LOCK:
-                status["homed"] = _ARM_HOMED
-            status["soft_limits"] = _xy_soft_limits()
-            status["limit_toward_zero_sign"] = _limit_toward_zero_signs()
-            status["limit_pin_mode"] = _get_limit_pin_mode()
-            status["cached"] = False
-            status["stale"] = False
-            status["cache_age_ms"] = 0
-            _cache_grbl_status(status)
-            return status
+            return _enrich_live_grbl_status(status, startup_lines=startup_lines)
         except HTTPException as exc:
             if exc.status_code == 504:
                 return _build_cached_grbl_status(str(exc.detail))
@@ -940,12 +950,39 @@ def _extract_limit_axes_from_results(results: list[dict[str, Any]]) -> set[str]:
     return limit_axes
 
 
-def _home_xy_axis(axis: str) -> dict[str, Any]:
+def _read_homing_limit_precheck() -> dict[str, Any]:
+    port = _get_grbl_port()
+    with _GRBL_SERIAL_LOCK:
+        try:
+            ser, startup_lines = _ensure_grbl_serial()
+            if hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+
+            status = _read_grbl_status_on_serial(ser)
+            status = _enrich_live_grbl_status(status, startup_lines=startup_lines)
+            status["homing_precheck"] = True
+            return status
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                _close_grbl_serial_locked()
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=f"Cannot verify GRBL limit switches before homing: {exc.detail}",
+            ) from exc
+        except Exception as exc:
+            _close_grbl_serial_locked()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot verify GRBL limit switches before homing on {port}: {exc}",
+            ) from exc
+
+
+def _home_xy_axis(axis: str, precheck_status: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     axis = axis.lower()
     if axis not in {"x", "y"}:
         raise HTTPException(status_code=400, detail=f"Unsupported homing axis: {axis}")
 
-    status = get_grbl_arm_status()
+    status = precheck_status or _read_homing_limit_precheck()
     if (status.get("limits") or {}).get(axis):
         _set_arm_axis_zero(axis)
         return {
@@ -967,7 +1004,9 @@ def _home_xy_axis(axis: str) -> dict[str, Any]:
             (f"G1 {command_axis}{distance} F{feed_rate}", True),
         ],
         wait_for_idle=True,
+        precheck_limit_axes=moving_axes,
         observe_limit_axes=moving_axes,
+        require_limit_precheck=True,
     )
     limit_axes = _extract_limit_axes_from_results(results)
     if axis not in limit_axes:
@@ -1031,8 +1070,8 @@ def _home_z_clearance() -> dict[str, Any]:
     }
 
 
-def _home_z_axis() -> dict[str, Any]:
-    status = get_grbl_arm_status()
+def _home_z_axis(precheck_status: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    status = precheck_status or _read_homing_limit_precheck()
     if (status.get("limits") or {}).get("z"):
         return {
             "axis": "z",
@@ -1070,7 +1109,9 @@ def _home_z_axis() -> dict[str, Any]:
                 ("G90", True),
             ],
             wait_for_idle=True,
+            precheck_limit_axes={"z"},
             observe_limit_axes={"z"},
+            require_limit_precheck=True,
         )
         limit_axes = _extract_limit_axes_from_results(results)
         moved_distance += abs(delta_z)
@@ -1128,9 +1169,10 @@ def home_xy_to_limits() -> dict[str, Any]:
     unlock_result = _unlock_grbl_if_needed()
 
     nc_limit_setting = ensure_nc_limit_pin_setting()
+    limit_precheck = _read_homing_limit_precheck()
 
     for axis in _get_home_xy_axis_order():
-        axis_reports.append(_home_xy_axis(axis))
+        axis_reports.append(_home_xy_axis(axis, precheck_status=limit_precheck))
 
     _set_arm_homed_zero()
     zero_result = _zero_work_position(include_z=False)
@@ -1140,6 +1182,7 @@ def home_xy_to_limits() -> dict[str, Any]:
         "homed": True,
         "position": {"x": 0.0, "y": 0.0},
         "axis_reports": axis_reports,
+        "limit_precheck": limit_precheck,
         "unlock_result": unlock_result,
         "nc_limit_setting": nc_limit_setting,
         "zero_result": zero_result,
@@ -1152,13 +1195,15 @@ def home_axes_to_limits() -> dict[str, Any]:
 
     unlock_result = _unlock_grbl_if_needed()
     nc_limit_setting = ensure_nc_limit_pin_setting()
+    limit_precheck = _read_homing_limit_precheck()
     z_clearance = _home_z_clearance()
 
     for axis in _get_home_xy_axis_order():
-        axis_reports.append(_home_xy_axis(axis))
+        axis_reports.append(_home_xy_axis(axis, precheck_status=limit_precheck))
 
     _set_arm_homed_zero()
-    z_report = _home_z_axis()
+    z_limit_precheck = _read_homing_limit_precheck()
+    z_report = _home_z_axis(precheck_status=z_limit_precheck)
     zero_result = _zero_work_position(include_z=True)
 
     return {
@@ -1166,8 +1211,10 @@ def home_axes_to_limits() -> dict[str, Any]:
         "homed": True,
         "position": {"x": 0.0, "y": 0.0, "z": 0.0},
         "sequence": ["z_clearance", "home_xy", "home_z"],
+        "limit_precheck": limit_precheck,
         "z_clearance": z_clearance,
         "axis_reports": axis_reports,
+        "z_limit_precheck": z_limit_precheck,
         "z_report": z_report,
         "unlock_result": unlock_result,
         "nc_limit_setting": nc_limit_setting,

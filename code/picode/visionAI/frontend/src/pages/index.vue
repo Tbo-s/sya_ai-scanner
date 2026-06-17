@@ -327,7 +327,34 @@
         </div>
 
         <div class="control-group">
+          <div class="control-title">Gate</div>
+          <div class="control-status secondary-text">Positie: {{ manualStatus.gatePos || "-" }}</div>
+          <div class="control-buttons">
+            <v-btn
+              color="success"
+              prepend-icon="mdi-gate-open"
+              :loading="isManualActionBusy('gate:open')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="moveGate('GATE_OPEN')"
+            >
+              OPEN
+            </v-btn>
+            <v-btn
+              color="secondary"
+              variant="tonal"
+              prepend-icon="mdi-gate"
+              :loading="isManualActionBusy('gate:close')"
+              :disabled="Boolean(manualControlBusy)"
+              @click="moveGate('GATE_CLOSE')"
+            >
+              CLOSE
+            </v-btn>
+          </div>
+        </div>
+
+        <div class="control-group">
           <div class="control-title">Tray</div>
+          <div class="control-status secondary-text">Positie: {{ manualStatus.trayPos || "-" }}</div>
           <div class="control-buttons">
             <v-btn
               color="success"
@@ -796,6 +823,10 @@ export default {
         y: 5.5,
       },
       manualStatus: {
+        gateState: null,
+        gatePos: "",
+        trayState: null,
+        trayPos: "",
         wrist1: null,
         wrist2: null,
         wrist1Physical: null,
@@ -1175,6 +1206,10 @@ export default {
           }
         }
         this.manualStatus = {
+          gateState: this.parseManualStatusInt(status.gateState),
+          gatePos: status.gatePos || "",
+          trayState: this.parseManualStatusInt(status.trayState),
+          trayPos: status.trayPos || "",
           wrist1: this.parseManualStatusInt(status.wrist1),
           wrist2: this.parseManualStatusInt(status.wrist2),
           wrist1Physical: this.parseManualStatusInt(status.wrist1_physical),
@@ -1267,6 +1302,17 @@ export default {
               : "Beweging ingekort tot softwaregrens.";
           }
           this.fetchArmStatus();
+        }
+      );
+    },
+    async moveGate(command) {
+      const isOpening = command === "GATE_OPEN";
+      await this.runManualAction(
+        `gate:${isOpening ? "open" : "close"}`,
+        `Gate ${isOpening ? "open" : "dicht"} gestuurd.`,
+        () => axios.post("/api/arduino/leonardo/gate", { command }, this.manualLeonardoRequestConfig()),
+        () => {
+          this.fetchManualStatus();
         }
       );
     },

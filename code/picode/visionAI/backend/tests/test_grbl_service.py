@@ -164,7 +164,11 @@ def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
     monkeypatch.setenv("APP_GRBL_HOME_Z_STEP", "1.0")
     monkeypatch.setenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "5.0")
     monkeypatch.setenv("APP_GRBL_HOME_Z_FEED_RATE", "60")
-    monkeypatch.setattr(grbl_service, "get_grbl_arm_status", lambda: {"limits": {"z": False}})
+    monkeypatch.setattr(
+        grbl_service,
+        "_read_homing_limit_precheck",
+        lambda: {"limits": {"x": False, "y": False, "z": False}},
+    )
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
 
     result = grbl_service._home_z_axis()
@@ -182,18 +186,84 @@ def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
 
     monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
     monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
+    monkeypatch.setattr(
+        grbl_service,
+        "_read_homing_limit_precheck",
+        lambda: calls.append("precheck") or {"limits": {"x": False, "y": False, "z": False}},
+    )
     monkeypatch.setattr(grbl_service, "_home_z_clearance", lambda: calls.append("z_clearance") or {"axis": "z"})
     monkeypatch.setattr(grbl_service, "_get_home_xy_axis_order", lambda: ["x", "y"])
-    monkeypatch.setattr(grbl_service, "_home_xy_axis", lambda axis: calls.append(f"xy_{axis}") or {"axis": axis})
-    monkeypatch.setattr(grbl_service, "_home_z_axis", lambda: calls.append("z_home") or {"axis": "z"})
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_xy_axis",
+        lambda axis, precheck_status=None: calls.append(f"xy_{axis}") or {"axis": axis},
+    )
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_z_axis",
+        lambda precheck_status=None: calls.append("z_home") or {"axis": "z"},
+    )
     monkeypatch.setattr(grbl_service, "_zero_work_position", lambda include_z: calls.append(f"zero_{include_z}") or [])
 
     result = home_axes_to_limits()
 
-    assert calls == ["unlock", "limits", "z_clearance", "xy_x", "xy_y", "z_home", "zero_True"]
+    assert calls == [
+        "unlock",
+        "limits",
+        "precheck",
+        "z_clearance",
+        "xy_x",
+        "xy_y",
+        "precheck",
+        "z_home",
+        "zero_True",
+    ]
     assert result["action"] == "home_axes_to_limits"
     assert result["sequence"] == ["z_clearance", "home_xy", "home_z"]
     assert result["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
+def test_home_xy_axis_skips_motion_when_precheck_limit_is_active(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(grbl_service, "_set_arm_axis_zero", lambda axis: calls.append(f"zero_{axis}"))
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", lambda *args, **kwargs: calls.append("move") or [])
+
+    result = grbl_service._home_xy_axis(
+        "x",
+        precheck_status={"limits": {"x": True, "y": False, "z": False}},
+    )
+
+    assert result["already_at_limit"] is True
+    assert result["limit_axes"] == ["x"]
+    assert calls == ["zero_x"]
+
+
+def test_home_xy_axis_requires_limit_precheck_before_motion(monkeypatch):
+    calls = []
+
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, **kwargs):
+        calls.append(kwargs)
+        return [{"idle": {"limit_triggered": True, "limit_axes": ["x"]}}]
+
+    monkeypatch.setenv("APP_GRBL_HOME_XY_SEARCH_DISTANCE", "10")
+    monkeypatch.setenv("APP_GRBL_HOME_XY_FEED_RATE", "120")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+    monkeypatch.setattr(grbl_service, "_set_arm_axis_zero", lambda axis: None)
+
+    result = grbl_service._home_xy_axis(
+        "x",
+        precheck_status={"limits": {"x": False, "y": False, "z": False}},
+    )
+
+    assert result["stopped_by_limit"] is True
+    assert calls == [
+        {
+            "precheck_limit_axes": {"x"},
+            "observe_limit_axes": {"x"},
+            "require_limit_precheck": True,
+        }
+    ]
 
 
 def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
