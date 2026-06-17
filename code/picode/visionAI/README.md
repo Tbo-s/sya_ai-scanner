@@ -165,7 +165,7 @@ De Mega/GRBL-logica zit in:
 ### 4.1 Repo clonen
 
 ```bash
-cd /home/pi
+cd /home/sya
 git clone <jouw-repo-url> sya
 cd sya
 ```

@@ -5,10 +5,10 @@ Requires=sya-backend.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/sya
+User=sya
+WorkingDirectory=/home/sya/sya
 Environment=DISPLAY=:0
-ExecStart=/home/pi/sya/scripts/pi_start_kiosk.sh http://127.0.0.1:3000
+ExecStart=/home/sya/sya/scripts/pi_start_kiosk.sh http://127.0.0.1:3000
 Restart=always
 RestartSec=5
 

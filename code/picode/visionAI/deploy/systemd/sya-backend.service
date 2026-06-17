@@ -4,10 +4,10 @@ After=local-fs.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/sya
-EnvironmentFile=/home/pi/sya/backend/config/config.env
-ExecStart=/home/pi/sya/scripts/pi_run_backend.sh
+User=sya
+WorkingDirectory=/home/sya/sya
+EnvironmentFile=/home/sya/sya/backend/config/config.env
+ExecStart=/home/sya/sya/scripts/pi_run_backend.sh
 Restart=always
 RestartSec=3
 
