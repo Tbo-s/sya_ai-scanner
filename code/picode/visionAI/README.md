@@ -217,6 +217,7 @@ Belangrijkste variabelen:
 - `APP_GRBL_FRONT_Y`
 - `APP_GRBL_BACK_X`
 - `APP_GRBL_BACK_Y`
+- `APP_GRBL_Z_AXIS_ENABLED`
 - `APP_GRBL_Z_PICKUP`
 - `APP_GRBL_Z_TRAVEL`
 - `APP_GRBL_HOME_Z_CLEARANCE`
@@ -524,6 +525,9 @@ curl -X POST http://127.0.0.1:3000/api/arduino/grbl/home
 daarna X/Y naar hun limits, daarna Z in stappen van `-1 mm` tot de Z-limit onderaan
 geraakt wordt. De exacte waarden zijn configureerbaar met `APP_GRBL_HOME_Z_*`.
 De homingfeedrates staan standaard traag ingesteld: X/Y `F60` en Z `F30`.
+Zet `APP_GRBL_Z_AXIS_ENABLED=0` om tijdelijk alle Z-bewegingen over te slaan wanneer
+de Z-driver niet aangesloten is. Homing doet dan alleen X/Y en Z-knoppen in de UI worden
+uitgeschakeld.
 Voor homing wordt eerst een live GRBL-status gelezen. Als X/Y al op hun limit-switch
 staan, worden die assen direct als `0` gezet en niet verder tegen de stopper bewogen.
 Als de switchstatus niet gelezen kan worden, wordt homing afgebroken in plaats van blind
@@ -549,6 +553,7 @@ Voor echte productie moet je minstens deze parameters op de hardware afstemmen:
 - `APP_GRBL_FRONT_Y`
 - `APP_GRBL_BACK_X`
 - `APP_GRBL_BACK_Y`
+- `APP_GRBL_Z_AXIS_ENABLED`
 - `APP_GRBL_Z_PICKUP`
 - `APP_GRBL_Z_TRAVEL`
 - `APP_ARM_DISTANCE_THRESHOLD_CM`

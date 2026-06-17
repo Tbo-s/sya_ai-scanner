@@ -26,6 +26,7 @@ def get_runtime_settings() -> dict[str, Any]:
             "x": float(os.getenv("APP_GRBL_MAX_X", "4.0")),
             "y": float(os.getenv("APP_GRBL_MAX_Y", "5.5")),
         },
+        "grbl_z_axis_enabled": _is_enabled("APP_GRBL_Z_AXIS_ENABLED", "1"),
         "grbl_home_xy_feed_rate": int(os.getenv("APP_GRBL_HOME_XY_FEED_RATE", "60")),
         "grbl_home_z_clearance": float(os.getenv("APP_GRBL_HOME_Z_CLEARANCE", "2.0")),
         "grbl_home_z_step": float(os.getenv("APP_GRBL_HOME_Z_STEP", "1.0")),

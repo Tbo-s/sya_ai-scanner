@@ -126,6 +126,22 @@ def _get_home_z_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_HOME_Z_FEED_RATE", "30"))
 
 
+def _is_z_axis_enabled() -> bool:
+    return os.getenv("APP_GRBL_Z_AXIS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _z_axis_disabled_report(action: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "action": action,
+        "axis": "z",
+        "skipped": True,
+        "disabled": True,
+        "reason": "z_axis_disabled",
+        "results": [],
+        **extra,
+    }
+
+
 def _get_limit_toward_zero_sign(axis: str) -> int:
     raw = os.getenv(f"APP_GRBL_{axis.upper()}_LIMIT_TOWARD_ZERO_SIGN", "-1").strip().lower()
     return 1 if raw in {"1", "+1", "+", "positive", "pos"} else -1
@@ -1039,6 +1055,14 @@ def _unlock_grbl_if_needed() -> Optional[dict[str, Any]]:
 def _home_z_clearance() -> dict[str, Any]:
     clearance = _get_home_z_clearance()
     feed_rate = _get_home_z_feed_rate()
+    if not _is_z_axis_enabled():
+        return _z_axis_disabled_report(
+            "home_z_clearance",
+            clearance=clearance,
+            delta=0.0,
+            feed_rate=feed_rate,
+        )
+
     clearance_delta = -_get_limit_toward_zero_sign("Z") * clearance
     if clearance <= 1e-9:
         return {
@@ -1071,6 +1095,17 @@ def _home_z_clearance() -> dict[str, Any]:
 
 
 def _home_z_axis(precheck_status: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if not _is_z_axis_enabled():
+        return _z_axis_disabled_report(
+            "home_z_axis",
+            already_at_limit=False,
+            stopped_by_limit=False,
+            limit_axes=[],
+            steps=0,
+            distance=0.0,
+            step_reports=[],
+        )
+
     status = precheck_status or _read_homing_limit_precheck()
     if (status.get("limits") or {}).get("z"):
         return {
@@ -1192,6 +1227,7 @@ def home_xy_to_limits() -> dict[str, Any]:
 def home_axes_to_limits() -> dict[str, Any]:
     _set_arm_unhomed()
     axis_reports = []
+    z_axis_enabled = _is_z_axis_enabled()
 
     unlock_result = _unlock_grbl_if_needed()
     nc_limit_setting = ensure_nc_limit_pin_setting()
@@ -1202,14 +1238,15 @@ def home_axes_to_limits() -> dict[str, Any]:
         axis_reports.append(_home_xy_axis(axis, precheck_status=limit_precheck))
 
     _set_arm_homed_zero()
-    z_limit_precheck = _read_homing_limit_precheck()
+    z_limit_precheck = _read_homing_limit_precheck() if z_axis_enabled else None
     z_report = _home_z_axis(precheck_status=z_limit_precheck)
-    zero_result = _zero_work_position(include_z=True)
+    zero_result = _zero_work_position(include_z=z_axis_enabled)
 
     return {
         "action": "home_axes_to_limits",
         "homed": True,
-        "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_axis_enabled else None},
+        "z_axis_enabled": z_axis_enabled,
         "sequence": ["z_clearance", "home_xy", "home_z"],
         "limit_precheck": limit_precheck,
         "z_clearance": z_clearance,
@@ -1270,6 +1307,9 @@ def move_to_back_of_phone() -> dict[str, Any]:
 
 
 def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
+    if not _is_z_axis_enabled():
+        return _z_axis_disabled_report(action, target_z=target_z)
+
     feed_rate = _feed_rate()
     return {
         "action": action,
@@ -1284,6 +1324,9 @@ def _move_z_absolute(target_z: float, action: str) -> dict[str, Any]:
 
 
 def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
+    if not _is_z_axis_enabled():
+        return _z_axis_disabled_report(action, delta=delta_z)
+
     feed_rate = _get_manual_z_feed_rate()
     return {
         "action": action,

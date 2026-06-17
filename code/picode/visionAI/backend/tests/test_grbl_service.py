@@ -81,6 +81,7 @@ def test_z_up_uses_absolute_positioning(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setenv("APP_GRBL_Z_PICKUP", "42.5")
     monkeypatch.setenv("APP_GRBL_FEED_RATE", "1234")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -101,6 +102,7 @@ def test_z_down_uses_absolute_positioning(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setenv("APP_GRBL_Z_TRAVEL", "7.0")
     monkeypatch.setenv("APP_GRBL_FEED_RATE", "900")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -121,6 +123,7 @@ def test_manual_z_up_uses_relative_jog_and_slow_feed(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "1.25")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "90")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -141,6 +144,7 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
         wait_flags.append(wait_for_idle)
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_STEP", "0.75")
     monkeypatch.setenv("APP_GRBL_MANUAL_Z_FEED_RATE", "60")
     monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
@@ -152,6 +156,21 @@ def test_manual_z_down_uses_relative_jog_and_slow_feed(monkeypatch):
     assert wait_flags == [True]
 
 
+def test_manual_z_move_is_skipped_when_z_axis_disabled(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "0")
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", lambda *args, **kwargs: calls.append("move") or [])
+
+    result = grbl_service.manual_z_move(5.0)
+
+    assert result["action"] == "manual_z_move"
+    assert result["skipped"] is True
+    assert result["disabled"] is True
+    assert result["reason"] == "z_axis_disabled"
+    assert calls == []
+
+
 def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
     calls = []
 
@@ -161,6 +180,7 @@ def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
             return [{"idle": {"limit_triggered": True, "limit_axes": ["z"]}}]
         return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setenv("APP_GRBL_HOME_Z_STEP", "1.0")
     monkeypatch.setenv("APP_GRBL_HOME_Z_SEARCH_DISTANCE", "5.0")
     monkeypatch.setenv("APP_GRBL_HOME_Z_FEED_RATE", "30")
@@ -184,6 +204,7 @@ def test_home_z_axis_steps_down_until_z_limit(monkeypatch):
 def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
     calls = []
 
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
     monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
     monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
     monkeypatch.setattr(
@@ -221,6 +242,35 @@ def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
     assert result["action"] == "home_axes_to_limits"
     assert result["sequence"] == ["z_clearance", "home_xy", "home_z"]
     assert result["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
+def test_home_axes_to_limits_skips_z_when_z_axis_disabled(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "0")
+    monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
+    monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
+    monkeypatch.setattr(
+        grbl_service,
+        "_read_homing_limit_precheck",
+        lambda: calls.append("precheck") or {"limits": {"x": False, "y": False, "z": False}},
+    )
+    monkeypatch.setattr(grbl_service, "_get_home_xy_axis_order", lambda: ["x", "y"])
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_xy_axis",
+        lambda axis, precheck_status=None: calls.append(f"xy_{axis}") or {"axis": axis},
+    )
+    monkeypatch.setattr(grbl_service, "_zero_work_position", lambda include_z: calls.append(f"zero_{include_z}") or [])
+
+    result = home_axes_to_limits()
+
+    assert calls == ["unlock", "limits", "precheck", "xy_x", "xy_y", "zero_False"]
+    assert result["z_axis_enabled"] is False
+    assert result["z_clearance"]["skipped"] is True
+    assert result["z_report"]["skipped"] is True
+    assert result["z_limit_precheck"] is None
+    assert result["position"] == {"x": 0.0, "y": 0.0, "z": None}
 
 
 def test_home_xy_axis_skips_motion_when_precheck_limit_is_active(monkeypatch):

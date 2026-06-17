@@ -183,7 +183,7 @@
             :disabled="Boolean(manualControlBusy)"
             @click="homeArm"
           >
-            Home X/Y/Z naar 0
+            {{ grblZAxisEnabled ? "Home X/Y/Z naar 0" : "Home X/Y naar 0" }}
           </v-btn>
         </div>
         <div v-if="armStatusError" class="error-text">{{ armStatusError }}</div>
@@ -318,11 +318,12 @@
 
         <div class="control-group">
           <div class="control-title">Z-axis</div>
+          <div class="control-status secondary-text">{{ grblZAxisEnabled ? "Actief" : "Uitgeschakeld" }}</div>
           <div class="control-buttons">
-            <v-btn :loading="isManualActionBusy('z:1')" :disabled="Boolean(manualControlBusy)" @click="jogZ(1)">+1</v-btn>
-            <v-btn :loading="isManualActionBusy('z:-1')" :disabled="Boolean(manualControlBusy)" @click="jogZ(-1)">-1</v-btn>
-            <v-btn :loading="isManualActionBusy('z:30')" :disabled="Boolean(manualControlBusy)" @click="jogZ(30)">+30</v-btn>
-            <v-btn :loading="isManualActionBusy('z:-30')" :disabled="Boolean(manualControlBusy)" @click="jogZ(-30)">-30</v-btn>
+            <v-btn :loading="isManualActionBusy('z:1')" :disabled="Boolean(manualControlBusy) || !grblZAxisEnabled" @click="jogZ(1)">+1</v-btn>
+            <v-btn :loading="isManualActionBusy('z:-1')" :disabled="Boolean(manualControlBusy) || !grblZAxisEnabled" @click="jogZ(-1)">-1</v-btn>
+            <v-btn :loading="isManualActionBusy('z:30')" :disabled="Boolean(manualControlBusy) || !grblZAxisEnabled" @click="jogZ(30)">+30</v-btn>
+            <v-btn :loading="isManualActionBusy('z:-30')" :disabled="Boolean(manualControlBusy) || !grblZAxisEnabled" @click="jogZ(-30)">-30</v-btn>
           </div>
         </div>
 
@@ -795,6 +796,7 @@ export default {
       testSpinActive: false,
       testSpinError: "",
       autoGrblTestSpinOnUiStart: false,
+      grblZAxisEnabled: true,
       manualXyStep: 0.5,
       manualXyFeedRate: 120,
       manualControlBusy: "",
@@ -942,6 +944,7 @@ export default {
       try {
         const response = await axios.get("/api/system/settings");
         this.autoGrblTestSpinOnUiStart = Boolean(response.data?.auto_grbl_test_spin_on_ui_start);
+        this.grblZAxisEnabled = response.data?.grbl_z_axis_enabled !== false;
         this.manualXyStep = Number(response.data?.grbl_manual_xy_step || 0.5);
         this.manualXyFeedRate = Number(response.data?.grbl_manual_xy_feed_rate || 120);
         this.armSoftLimits = {
@@ -954,6 +957,7 @@ export default {
         };
       } catch (error) {
         this.autoGrblTestSpinOnUiStart = false;
+        this.grblZAxisEnabled = true;
         this.manualXyStep = 0.5;
         this.manualXyFeedRate = 120;
         this.armSoftLimits = { x: 4, y: 5.5 };
