@@ -1,4 +1,5 @@
 import atexit
+import glob
 import math
 import os
 import re
@@ -765,6 +766,58 @@ def _close_grbl_serial() -> None:
         _close_grbl_serial_locked()
 
 
+def _is_auto_grbl_port(port: str) -> bool:
+    return port.strip().lower() in {"", "auto", "detect"}
+
+
+def _dedupe_serial_ports(ports: list[str]) -> list[str]:
+    seen = set()
+    unique = []
+    for port in ports:
+        key = os.path.realpath(port) if os.path.exists(port) else port
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(port)
+    return unique
+
+
+def _candidate_grbl_ports(configured_port: str) -> list[str]:
+    ports = []
+    if not _is_auto_grbl_port(configured_port):
+        ports.append(configured_port)
+
+    ports.extend(sorted(glob.glob("/dev/serial/by-id/*")))
+    ports.extend(sorted(glob.glob("/dev/ttyUSB*")))
+    ports.extend(sorted(glob.glob("/dev/ttyACM*")))
+    return _dedupe_serial_ports(ports)
+
+
+def _serial_looks_like_grbl(ser: serial.Serial, startup_lines: list[str]) -> bool:
+    if any("grbl" in line.lower() for line in startup_lines):
+        return True
+
+    try:
+        if hasattr(ser, "reset_input_buffer"):
+            ser.reset_input_buffer()
+        ser.write(b"?")
+
+        started_at = time.time()
+        while time.time() - started_at < max(0.5, _get_grbl_status_timeout_s()):
+            raw = ser.readline()
+            if not raw:
+                continue
+            text = raw.decode("utf-8", errors="ignore").strip()
+            if not text:
+                continue
+            if "grbl" in text.lower() or _parse_grbl_status_line(text) is not None:
+                return True
+    except Exception:
+        return False
+
+    return False
+
+
 def _open_grbl_serial(port: str, baudrate: int) -> tuple[serial.Serial, list[str]]:
     ser = serial.Serial()
     ser.port = port
@@ -798,24 +851,40 @@ def _open_grbl_serial(port: str, baudrate: int) -> tuple[serial.Serial, list[str
 def _ensure_grbl_serial() -> tuple[serial.Serial, list[str]]:
     global _GRBL_SERIAL, _GRBL_SERIAL_PORT, _GRBL_SERIAL_BAUD
 
-    port = _get_grbl_port()
+    configured_port = _get_grbl_port()
+    candidate_ports = _candidate_grbl_ports(configured_port)
     baudrate = _get_grbl_baud()
 
     if _GRBL_SERIAL is not None:
-        same_port = _GRBL_SERIAL_PORT == port and _GRBL_SERIAL_BAUD == baudrate
+        same_port = _GRBL_SERIAL_PORT in candidate_ports and _GRBL_SERIAL_BAUD == baudrate
         if same_port and getattr(_GRBL_SERIAL, "is_open", False):
             return _GRBL_SERIAL, []
         _close_grbl_serial_locked()
 
-    try:
-        ser, startup_lines = _open_grbl_serial(port, baudrate)
-        _GRBL_SERIAL = ser
-        _GRBL_SERIAL_PORT = port
-        _GRBL_SERIAL_BAUD = baudrate
-        return ser, startup_lines
-    except Exception as exc:
-        _close_grbl_serial_locked()
-        raise HTTPException(status_code=500, detail=f"Failed to talk to GRBL on {port}: {exc}") from exc
+    attempts = []
+    for port in candidate_ports:
+        try:
+            ser, startup_lines = _open_grbl_serial(port, baudrate)
+            if not _serial_looks_like_grbl(ser, startup_lines):
+                attempts.append(f"{port}: no GRBL response")
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                continue
+
+            _GRBL_SERIAL = ser
+            _GRBL_SERIAL_PORT = port
+            _GRBL_SERIAL_BAUD = baudrate
+            return ser, startup_lines
+        except Exception as exc:
+            attempts.append(f"{port}: {exc}")
+            _close_grbl_serial_locked()
+
+    detail = "No candidate GRBL serial ports found."
+    if attempts:
+        detail = "Failed to find GRBL controller. Attempts: " + "; ".join(attempts)
+    raise HTTPException(status_code=500, detail=detail)
 
 
 atexit.register(_close_grbl_serial)

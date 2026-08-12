@@ -162,6 +162,21 @@ De Mega/GRBL-logica zit in:
 
 ## 4. Raspberry Pi Setup
 
+### 4.0 Snelle recovery na nieuwe SD-kaart
+
+Flash Raspberry Pi OS, maak gebruiker `sya` aan en zet SSH aan. Daarna:
+
+```bash
+cd /home/sya
+git clone <jouw-repo-url> sya
+cd /home/sya/sya
+./scripts/pi_first_boot_setup.sh
+```
+
+Laat `APP_GRBL_HOME_ON_BOOT=0` staan tot X/Y/Z limit-switches met
+`/api/arduino/grbl/status` of een raw `?` GRBL-status bewezen schakelen.
+Zet homing pas daarna terug aan.
+
 ### 4.1 Repo clonen
 
 ```bash

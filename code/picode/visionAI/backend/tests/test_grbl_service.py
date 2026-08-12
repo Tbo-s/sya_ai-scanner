@@ -536,3 +536,64 @@ def test_run_grbl_commands_reuses_existing_serial_connection(monkeypatch):
     ]
     assert first[0]["startup"] == ["Grbl ready"]
     assert "startup" not in second[0]
+
+
+def test_run_grbl_commands_falls_back_to_detected_grbl_port(monkeypatch):
+    created_serials = []
+    sent_commands = []
+
+    class FakeSerial:
+        def __init__(self):
+            self.port = None
+            self.baudrate = None
+            self.timeout = None
+            self.dtr = True
+            self.rts = True
+            self.is_open = False
+            self.writes = []
+            created_serials.append(self)
+
+        def open(self):
+            self.is_open = True
+
+        def close(self):
+            self.is_open = False
+
+        def reset_input_buffer(self):
+            return None
+
+        def reset_output_buffer(self):
+            return None
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def readline(self):
+            if self.port == "/dev/ttyUSB1" and self.writes and self.writes[-1] == b"?":
+                return b"<Idle|MPos:0.000,0.000,0.000|FS:0,0>\n"
+            return b""
+
+    def fake_glob(pattern):
+        if pattern == "/dev/ttyUSB*":
+            return ["/dev/ttyUSB0", "/dev/ttyUSB1"]
+        return []
+
+    def fake_send_grbl_on_serial(ser, command, wait_for_ok=True):
+        sent_commands.append((ser.port, command, wait_for_ok))
+        return {"command": command, "wait_for_ok": wait_for_ok}
+
+    grbl_service._close_grbl_serial()
+    monkeypatch.setenv("APP_GRBL_PORT", "/dev/missing")
+    monkeypatch.setattr(grbl_service.glob, "glob", fake_glob)
+    monkeypatch.setattr(grbl_service.os.path, "exists", lambda port: True)
+    monkeypatch.setattr(grbl_service.serial, "Serial", FakeSerial)
+    monkeypatch.setattr(grbl_service, "_prepare_grbl_serial", lambda ser: [])
+    monkeypatch.setattr(grbl_service, "_send_grbl_on_serial", fake_send_grbl_on_serial)
+
+    try:
+        grbl_service._run_grbl_commands([("G21", True)])
+    finally:
+        grbl_service._close_grbl_serial()
+
+    assert [ser.port for ser in created_serials] == ["/dev/missing", "/dev/ttyUSB0", "/dev/ttyUSB1"]
+    assert sent_commands == [("/dev/ttyUSB1", "G21", True)]

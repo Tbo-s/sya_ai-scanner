@@ -7,7 +7,16 @@ export HOME="${HOME:-/home/sya}"
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 
-exec chromium-browser \
+CHROMIUM_BIN="${CHROMIUM_BIN:-}"
+if [ -z "$CHROMIUM_BIN" ]; then
+  CHROMIUM_BIN="$(command -v chromium-browser || command -v chromium || true)"
+fi
+if [ -z "$CHROMIUM_BIN" ]; then
+  echo "chromium-browser/chromium not found"
+  exit 1
+fi
+
+exec "$CHROMIUM_BIN" \
   --kiosk \
   --incognito \
   --noerrdialogs \
