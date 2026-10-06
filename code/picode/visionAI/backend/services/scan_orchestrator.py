@@ -35,6 +35,7 @@ class ScanSession:
     max_value_eur: float
     photo_paths: list[str] = field(default_factory=list)
     ai_result: Optional[dict] = None
+    upload_result: Optional[dict] = None
     status: str = "running"
     state: str = FlowState.LOAD_DEVICE
     current_step: int = 0
@@ -103,6 +104,7 @@ class ScanOrchestrator:
             "max_value_eur": session.max_value_eur,
             "photo_count": len(session.photo_paths),
             "ai_result": session.ai_result,
+            "upload_result": session.upload_result,
             "error": session.error,
         }
 
@@ -186,7 +188,7 @@ class ScanOrchestrator:
 
     async def _execute_sequence(self, session: ScanSession):
         from controller.camera import camera_manager, take_photo
-        from services import ai_damage_service, grbl_service, machine_service
+        from services import ai_damage_service, grbl_service, machine_service, scan_upload_service
 
         vacuum_dwell = float(os.getenv("APP_VACUUM_DWELL_S", "1.0"))
 
@@ -266,6 +268,17 @@ class ScanOrchestrator:
         )
         session.ai_result = ai_result.model_dump()
         await self._broadcast("step_complete", 53, "ai_done", session.ai_result)
+        upload_result = await asyncio.to_thread(
+            scan_upload_service.upload_scan_results,
+            imei=session.imei,
+            session_id=session.session_id,
+            device_model=session.device_model,
+            max_value_eur=session.max_value_eur,
+            photo_paths=session.photo_paths,
+            ai_result=session.ai_result,
+        )
+        session.upload_result = upload_result
+        await self._broadcast("step_complete", 53, "scan_upload", upload_result)
 
         await self._set_state(session, FlowState.RETURN_DEVICE)
         await self._step(session, 54, "tray_center_back", machine_service.tray_in)

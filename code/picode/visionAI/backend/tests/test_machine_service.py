@@ -96,3 +96,20 @@ def test_derive_tray_position_in():
 def test_derive_tray_position_unknown():
     position = _derive_tray_position_from_status({"trayOutSw": "1", "trayInSw": "1"})
     assert position == "UNKNOWN"
+
+
+def test_vacuum_motor_waits_for_ack(monkeypatch):
+    sent_commands = []
+
+    def fake_send_with_response(command, **_kwargs):
+        sent_commands.append(command)
+        return [f"ACK:{command}"]
+
+    monkeypatch.setattr(machine_service, "_send_with_response", fake_send_with_response)
+
+    result = machine_service.set_vacuum1_motor(True)
+
+    assert sent_commands == ["VAC1_ON"]
+    assert result["ack"] is True
+    assert result["enabled"] is True
+    assert result["response"] == ["ACK:VAC1_ON"]

@@ -10,6 +10,7 @@ from serial.tools import list_ports  # type: ignore
 from services.grbl_service import (
     get_grbl_arm_status,
     home_axes_to_limits,
+    home_axes_x_y_z_to_limits,
     home_xy_to_limits,
     is_safe_grbl_command as service_is_safe_grbl_command,
     manual_xy_move,
@@ -33,6 +34,8 @@ from services.machine_service import (
     get_tray_position as machine_get_tray_position,
     home_machine as machine_home_machine,
     open_gate as machine_open_gate,
+    set_wrist1 as machine_set_wrist1,
+    set_wrist2 as machine_set_wrist2,
     set_valve1 as machine_set_valve1,
     set_valve2 as machine_set_valve2,
     set_vacuum1_motor as machine_set_vacuum1_motor,
@@ -41,6 +44,7 @@ from services.machine_service import (
     tray_out as machine_tray_out,
     tray_stop as machine_tray_stop,
 )
+from services.wrist_preset_service import get_wrist_presets, update_wrist_preset
 
 
 router = APIRouter()
@@ -65,6 +69,15 @@ class TrayCommand(BaseModel):
 
 class AngleDeltaCommand(BaseModel):
     delta: int = Field(ge=-180, le=180)
+
+
+class WristAngleCommand(BaseModel):
+    angle: int = Field(ge=-180, le=180)
+
+
+class WristPresetCommand(BaseModel):
+    key: str = Field(min_length=1)
+    angle: int = Field(ge=-180, le=180)
 
 
 class ToggleState(BaseModel):
@@ -351,14 +364,45 @@ def get_leonardo_distance():
     return machine_read_distance_for_display()
 
 
+@router.get("/arduino/leonardo/wrist-presets", tags=["Arduino"])
+def get_leonardo_wrist_presets():
+    return get_wrist_presets()
+
+
 @router.post("/arduino/leonardo/wrist1/step", tags=["Arduino"])
 def step_leonardo_wrist1(payload: AngleDeltaCommand):
     return machine_adjust_wrist1(payload.delta)
 
 
+@router.post("/arduino/leonardo/wrist1/angle", tags=["Arduino"])
+def set_leonardo_wrist1_angle(payload: WristAngleCommand):
+    return machine_set_wrist1(payload.angle)
+
+
+@router.post("/arduino/leonardo/wrist1/preset", tags=["Arduino"])
+def save_leonardo_wrist1_preset(payload: WristPresetCommand):
+    try:
+        return update_wrist_preset(1, payload.key, payload.angle)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/arduino/leonardo/wrist2/step", tags=["Arduino"])
 def step_leonardo_wrist2(payload: AngleDeltaCommand):
     return machine_adjust_wrist2(payload.delta)
+
+
+@router.post("/arduino/leonardo/wrist2/angle", tags=["Arduino"])
+def set_leonardo_wrist2_angle(payload: WristAngleCommand):
+    return machine_set_wrist2(payload.angle)
+
+
+@router.post("/arduino/leonardo/wrist2/preset", tags=["Arduino"])
+def save_leonardo_wrist2_preset(payload: WristPresetCommand):
+    try:
+        return update_wrist_preset(2, payload.key, payload.angle)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/arduino/leonardo/vacuum1/motor", tags=["Arduino"])
@@ -394,6 +438,11 @@ def grbl_unlock():
 @router.post("/arduino/grbl/home", tags=["Arduino"])
 def grbl_home():
     return home_axes_to_limits()
+
+
+@router.post("/arduino/grbl/home-x-y-z", tags=["Arduino"])
+def grbl_home_x_y_z():
+    return home_axes_x_y_z_to_limits()
 
 
 @router.post("/arduino/grbl/home-xy", tags=["Arduino"])

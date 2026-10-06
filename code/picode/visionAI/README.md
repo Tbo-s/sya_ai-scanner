@@ -93,8 +93,13 @@ De Leonardo-logica zit vooral in:
 
 Stuurt:
 
-- CoreXY X/Y-beweging
+- X/Y-beweging
 - Z-as
+
+De carriage is mechanisch cartesiaans. De interface zet de zichtbare pijlen om
+naar de gedraaide Mega-motorassen: boven/onder gebruikt Mega X en links/rechts
+gebruikt Mega Y met omgekeerde richting. `APP_GRBL_COREXY_ENABLED` blijft
+beschikbaar voor een eventuele echte CoreXY-opstelling, maar staat uit.
 
 De Mega/GRBL-logica zit in:
 
@@ -250,6 +255,10 @@ Belangrijkste variabelen:
 - `APP_DEVICE_LOOKUP_API_TIMEOUT_S`
 - `APP_AI_DAMAGE_API_MOCK`
 - `APP_AI_DAMAGE_API_URL`
+- `APP_SCAN_RESULTS_UPLOAD_ENABLED`
+- `APP_SCAN_RESULTS_UPLOAD_URL`
+- `APP_SCAN_RESULTS_UPLOAD_TIMEOUT_S`
+- `APP_SCAN_RESULTS_UPLOAD_REQUIRED`
 
 De documentatie van die env vars staat in:
 
@@ -428,6 +437,13 @@ Zet `APP_DEVICE_LOOKUP_API_ENABLED=1` en `APP_DEVICE_LOOKUP_API_URL=...` om late
 
 - mock-resultaten als `APP_AI_DAMAGE_API_MOCK=1`
 - echte API-calls met IMEI, sessie, maximumwaarde en alle foto's als `APP_AI_DAMAGE_API_MOCK=0`
+
+[`backend/services/scan_upload_service.py`](/Users/tbo/Desktop/github/sya_ai-scanner/code/picode/visionAI/backend/services/scan_upload_service.py) kan na een volledige scan een aparte POST sturen met IMEI, sessie, toestelmodel, maximumwaarde, AI-resultaat en alle foto's als base64 JSON. Standaard staat dit uit:
+
+- `APP_SCAN_RESULTS_UPLOAD_ENABLED=0`
+- `APP_SCAN_RESULTS_UPLOAD_URL=`
+
+Vul later de URL in en zet `APP_SCAN_RESULTS_UPLOAD_ENABLED=1` om de POST effectief te sturen. Met `APP_SCAN_RESULTS_UPLOAD_REQUIRED=1` faalt de scan-flow als deze upload mislukt; standaard wordt een uploadfout alleen gerapporteerd in `upload_result`.
 
 ## 8. API Endpoints
 

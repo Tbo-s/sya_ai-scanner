@@ -794,16 +794,25 @@ def _set_binary_output(
 ) -> dict:
     command = command_on if enabled else command_off
     expected = done_on if enabled else done_off
-    _send_line(command)
-    return {
+    expected_tokens = (expected, f"ACK:{command}")
+    lines = _send_with_response(
+        command,
+        timeout_s=max(0.4, _get_leonardo_read_timeout_s()),
+        stop_when=lambda line: any(token in line for token in expected_tokens),
+        open_delay_s=_get_leonardo_command_open_delay_s(),
+    )
+    done = _contains_any_token(lines, expected_tokens)
+    result = {
         "command": command,
         "sent": True,
-        "ack": False,
-        "ack_skipped": True,
+        "ack": done,
         "expected": expected,
         "enabled": enabled,
-        "response": [],
+        "response": lines,
     }
+    if raise_on_no_ack:
+        return _require_done(command, done, lines) | result
+    return result
 
 
 def set_vacuum1_motor(enabled: bool, raise_on_no_ack: bool = True) -> dict:

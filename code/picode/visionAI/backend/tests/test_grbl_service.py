@@ -4,6 +4,7 @@ import services.grbl_service as grbl_service
 from services.grbl_service import (
     _parse_sequence,
     home_axes_to_limits,
+    home_axes_x_y_z_to_limits,
     is_safe_grbl_command,
     manual_z_down,
     manual_z_up,
@@ -244,6 +245,32 @@ def test_home_axes_to_limits_runs_z_clearance_before_xy_then_z(monkeypatch):
     assert result["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
 
 
+def test_home_axes_x_y_z_to_limits_runs_x_then_y_then_z(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
+    monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
+    monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_xy_axis",
+        lambda axis, precheck_status=None: calls.append(f"xy_{axis}") or {"axis": axis},
+    )
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_z_axis",
+        lambda precheck_status=None: calls.append("z_home") or {"axis": "z"},
+    )
+    monkeypatch.setattr(grbl_service, "_zero_work_position", lambda include_z: calls.append(f"zero_{include_z}") or [])
+
+    result = home_axes_x_y_z_to_limits()
+
+    assert calls == ["unlock", "limits", "xy_x", "xy_y", "z_home", "zero_True"]
+    assert result["action"] == "home_axes_x_y_z_to_limits"
+    assert result["sequence"] == ["home_x", "home_y", "home_z"]
+    assert result["position"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
 def test_home_axes_to_limits_skips_z_when_z_axis_disabled(monkeypatch):
     calls = []
 
@@ -316,7 +343,7 @@ def test_home_xy_axis_requires_limit_precheck_before_motion(monkeypatch):
     ]
 
 
-def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
+def test_manual_xy_move_uses_direct_x_axis_by_default(monkeypatch):
     commands = []
     wait_flags = []
 
@@ -335,7 +362,7 @@ def test_manual_xy_move_omits_zero_y_axis(monkeypatch):
     assert wait_flags == [True]
 
 
-def test_manual_xy_move_omits_zero_x_axis(monkeypatch):
+def test_manual_xy_move_uses_direct_y_axis_by_default(monkeypatch):
     commands = []
     wait_flags = []
 
@@ -401,6 +428,12 @@ def test_manual_xy_move_clamps_to_soft_limit_after_homing(monkeypatch):
     assert result["applied_delta"] == {"x": 0.5, "y": 0.0}
     assert result["position"]["x"] == 4.0
     assert commands == [("G21", True), ("G91", True), ("G1 X0.5 F120", True)]
+
+
+def test_corexy_can_be_enabled_for_a_corexy_machine(monkeypatch):
+    monkeypatch.setenv("APP_GRBL_COREXY_ENABLED", "1")
+
+    assert grbl_service._format_xy_jog_command(1.0, -2.0, 120) == "G1 X-1.0 Y3.0 F120"
 
 
 def test_manual_xy_move_skips_when_soft_limit_already_reached(monkeypatch):

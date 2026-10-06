@@ -209,9 +209,9 @@
                   icon
                   size="x-large"
                   :loading="isManualActionBusy('xy:forward')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
                   aria-label="Arm naar voren"
-                  @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
+                  @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
                 >
                   <v-icon>mdi-arrow-up</v-icon>
                 </v-btn>
@@ -247,9 +247,9 @@
                   icon
                   size="x-large"
                   :loading="isManualActionBusy('xy:back')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
                   aria-label="Arm naar achter"
-                  @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
+                  @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
                 >
                   <v-icon>mdi-arrow-down</v-icon>
                 </v-btn>
@@ -266,9 +266,9 @@
                   icon
                   size="large"
                   :loading="isManualActionBusy('xy:fine:forward')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyFineStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyFineStep)"
                   aria-label="Arm naar voren fijn"
-                  @click="jogXY(0, manualXyFineStep, 'Fijne stap naar voren gestuurd.', 'xy:fine:forward')"
+                  @click="jogXY(0, -manualXyFineStep, 'Fijne stap naar voren gestuurd.', 'xy:fine:forward')"
                 >
                   <v-icon>mdi-arrow-up</v-icon>
                 </v-btn>
@@ -304,9 +304,9 @@
                   icon
                   size="large"
                   :loading="isManualActionBusy('xy:fine:back')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyFineStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyFineStep)"
                   aria-label="Arm naar achter fijn"
-                  @click="jogXY(0, -manualXyFineStep, 'Fijne stap naar achter gestuurd.', 'xy:fine:back')"
+                  @click="jogXY(0, manualXyFineStep, 'Fijne stap naar achter gestuurd.', 'xy:fine:back')"
                 >
                   <v-icon>mdi-arrow-down</v-icon>
                 </v-btn>
@@ -394,13 +394,54 @@
           <div class="control-status secondary-text">
             Logisch: {{ manualStatus.wrist1 ?? "-" }}° | Fysiek: {{ manualStatus.wrist1Physical ?? "-" }}°
           </div>
-          <div class="control-buttons">
-            <v-btn :loading="isManualActionBusy('w1:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 1)">+1°</v-btn>
-            <v-btn :loading="isManualActionBusy('w1:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -1)">-1°</v-btn>
-            <v-btn :loading="isManualActionBusy('w1:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 30)">+30°</v-btn>
-            <v-btn :loading="isManualActionBusy('w1:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -30)">-30°</v-btn>
-            <v-btn :loading="isManualActionBusy('w1:90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, 90)">+90°</v-btn>
-            <v-btn :loading="isManualActionBusy('w1:-90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(1, -90)">-90°</v-btn>
+          <div class="control-buttons wrist-preset-buttons">
+            <v-btn
+              v-for="preset in wrist1Presets"
+              :key="preset.key"
+              :variant="selectedWrist1PresetKey === preset.key ? 'elevated' : 'tonal'"
+              :loading="isManualActionBusy(`w1:preset:${preset.key}`)"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setWrist1Preset(preset)"
+            >
+              <span>{{ preset.label }}</span>
+              <span class="button-subtext">{{ preset.logical }}° / {{ wrist1PhysicalAngle(preset.logical) }}°</span>
+            </v-btn>
+          </div>
+          <v-btn
+            color="secondary"
+            variant="outlined"
+            :disabled="Boolean(manualControlBusy)"
+            @click="toggleWrist1Calibration"
+          >
+            Calibratie
+          </v-btn>
+          <div v-if="wrist1CalibrationOpen" class="wrist-calibration-panel">
+            <div class="control-status secondary-text">
+              {{ selectedWrist1Preset.label }}: logisch {{ selectedWrist1Preset.logical }}°,
+              fysiek {{ wrist1PhysicalAngle(selectedWrist1Preset.logical) }}°
+            </div>
+            <div class="control-buttons">
+              <template v-for="stepSize in wrist1CalibrationSteps" :key="stepSize">
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  :loading="isManualActionBusy(`w1:cal:${selectedWrist1Preset.key}:-${stepSize}`)"
+                  :disabled="Boolean(manualControlBusy)"
+                  @click="calibrateWrist1Preset(-stepSize)"
+                >
+                  -{{ stepSize }}°
+                </v-btn>
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  :loading="isManualActionBusy(`w1:cal:${selectedWrist1Preset.key}:${stepSize}`)"
+                  :disabled="Boolean(manualControlBusy)"
+                  @click="calibrateWrist1Preset(stepSize)"
+                >
+                  +{{ stepSize }}°
+                </v-btn>
+              </template>
+            </div>
           </div>
         </div>
 
@@ -409,13 +450,54 @@
           <div class="control-status secondary-text">
             Logisch: {{ manualStatus.wrist2 ?? "-" }}° | Fysiek: {{ manualStatus.wrist2Physical ?? "-" }}°
           </div>
-          <div class="control-buttons">
-            <v-btn :loading="isManualActionBusy('w2:1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 1)">+1°</v-btn>
-            <v-btn :loading="isManualActionBusy('w2:-1')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -1)">-1°</v-btn>
-            <v-btn :loading="isManualActionBusy('w2:30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 30)">+30°</v-btn>
-            <v-btn :loading="isManualActionBusy('w2:-30')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -30)">-30°</v-btn>
-            <v-btn :loading="isManualActionBusy('w2:90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, 90)">+90°</v-btn>
-            <v-btn :loading="isManualActionBusy('w2:-90')" :disabled="Boolean(manualControlBusy)" @click="stepWrist(2, -90)">-90°</v-btn>
+          <div class="control-buttons wrist-preset-buttons">
+            <v-btn
+              v-for="preset in wrist2Presets"
+              :key="preset.key"
+              :variant="selectedWrist2PresetKey === preset.key ? 'elevated' : 'tonal'"
+              :loading="isManualActionBusy(`w2:preset:${preset.key}`)"
+              :disabled="Boolean(manualControlBusy)"
+              @click="setWrist2Preset(preset)"
+            >
+              <span>{{ preset.label }}</span>
+              <span class="button-subtext">{{ preset.logical }}° / {{ wrist2PhysicalAngle(preset.logical) }}°</span>
+            </v-btn>
+          </div>
+          <v-btn
+            color="secondary"
+            variant="outlined"
+            :disabled="Boolean(manualControlBusy)"
+            @click="toggleWrist2Calibration"
+          >
+            Calibratie
+          </v-btn>
+          <div v-if="wrist2CalibrationOpen" class="wrist-calibration-panel">
+            <div class="control-status secondary-text">
+              {{ selectedWrist2Preset.label }}: logisch {{ selectedWrist2Preset.logical }}°,
+              fysiek {{ wrist2PhysicalAngle(selectedWrist2Preset.logical) }}°
+            </div>
+            <div class="control-buttons">
+              <template v-for="stepSize in wrist2CalibrationSteps" :key="stepSize">
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  :loading="isManualActionBusy(`w2:cal:${selectedWrist2Preset.key}:-${stepSize}`)"
+                  :disabled="Boolean(manualControlBusy)"
+                  @click="calibrateWrist2Preset(-stepSize)"
+                >
+                  -{{ stepSize }}°
+                </v-btn>
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  :loading="isManualActionBusy(`w2:cal:${selectedWrist2Preset.key}:${stepSize}`)"
+                  :disabled="Boolean(manualControlBusy)"
+                  @click="calibrateWrist2Preset(stepSize)"
+                >
+                  +{{ stepSize }}°
+                </v-btn>
+              </template>
+            </div>
           </div>
         </div>
 
@@ -743,6 +825,72 @@ const STEP_NAMES = {
   59: "Lade uitschuiven",
 };
 
+const WRIST_CALIBRATION_STEPS = Object.freeze([1, 3, 10]);
+const WRIST1_LOGICAL_MIN = 32;
+const WRIST1_LOGICAL_MAX = 152;
+const WRIST1_PHYSICAL_OFFSET = 45;
+const WRIST1_DEFAULT_PRESETS = Object.freeze([
+  { key: "camera", label: "Camerakant", logical: 53 },
+  { key: "wall", label: "Muurkant", logical: 95 },
+  { key: "gate", label: "Gatekant", logical: 132 },
+]);
+const WRIST2_LOGICAL_MIN = -90;
+const WRIST2_LOGICAL_MAX = 90;
+const WRIST2_LEFT_PHYSICAL = -14;
+const WRIST2_CENTER_PHYSICAL = 83;
+const WRIST2_RIGHT_PHYSICAL = 190;
+const WRIST2_DEFAULT_PRESETS = Object.freeze([
+  { key: "horizontal", label: "Horizontaal", logical: -9 },
+  { key: "vertical_left", label: "Verticaal links", logical: 58 },
+  { key: "vertical_right", label: "Verticaal rechts", logical: -90 },
+]);
+
+function clampWrist1LogicalAngle(angle) {
+  const numericAngle = Number(angle);
+  if (!Number.isFinite(numericAngle)) {
+    return WRIST1_LOGICAL_MIN;
+  }
+  return Math.max(WRIST1_LOGICAL_MIN, Math.min(WRIST1_LOGICAL_MAX, Math.round(numericAngle)));
+}
+
+function defaultWrist1Presets() {
+  return WRIST1_DEFAULT_PRESETS.map((preset) => ({ ...preset }));
+}
+
+function clampWrist2LogicalAngle(angle) {
+  const numericAngle = Number(angle);
+  if (!Number.isFinite(numericAngle)) {
+    return WRIST2_LOGICAL_MIN;
+  }
+  return Math.max(WRIST2_LOGICAL_MIN, Math.min(WRIST2_LOGICAL_MAX, Math.round(numericAngle)));
+}
+
+function defaultWrist2Presets() {
+  return WRIST2_DEFAULT_PRESETS.map((preset) => ({ ...preset }));
+}
+
+function normalizeWristPresets(defaultPresets, savedPresets = [], clampFn) {
+  const availablePresets = Array.isArray(savedPresets) ? savedPresets : [];
+  return defaultPresets.map((defaultPreset) => {
+    const savedPreset = availablePresets.find((preset) => preset?.key === defaultPreset.key);
+    return {
+      ...defaultPreset,
+      logical: clampFn(savedPreset?.logical ?? defaultPreset.logical),
+    };
+  });
+}
+
+function wrist2PhysicalAngleFromLogical(logicalAngle) {
+  const angle = clampWrist2LogicalAngle(logicalAngle);
+  if (angle >= 0) {
+    return Math.trunc(WRIST2_CENTER_PHYSICAL + ((angle / WRIST2_LOGICAL_MAX) * (WRIST2_RIGHT_PHYSICAL - WRIST2_CENTER_PHYSICAL)));
+  }
+  return Math.trunc(
+    WRIST2_LEFT_PHYSICAL +
+      (((angle - WRIST2_LOGICAL_MIN) / (0 - WRIST2_LOGICAL_MIN)) * (WRIST2_CENTER_PHYSICAL - WRIST2_LEFT_PHYSICAL))
+  );
+}
+
 export default {
   name: "HomePage",
   data() {
@@ -799,6 +947,14 @@ export default {
       grblZAxisEnabled: true,
       manualXyStep: 0.5,
       manualXyFeedRate: 120,
+      wrist1Presets: defaultWrist1Presets(),
+      wrist1CalibrationSteps: WRIST_CALIBRATION_STEPS,
+      selectedWrist1PresetKey: "camera",
+      wrist1CalibrationOpen: false,
+      wrist2Presets: defaultWrist2Presets(),
+      wrist2CalibrationSteps: WRIST_CALIBRATION_STEPS,
+      selectedWrist2PresetKey: "horizontal",
+      wrist2CalibrationOpen: false,
       manualControlBusy: "",
       manualControlError: "",
       manualControlSuccess: "",
@@ -843,6 +999,12 @@ export default {
     };
   },
   computed: {
+    selectedWrist1Preset() {
+      return this.wrist1Presets.find((preset) => preset.key === this.selectedWrist1PresetKey) || this.wrist1Presets[0];
+    },
+    selectedWrist2Preset() {
+      return this.wrist2Presets.find((preset) => preset.key === this.selectedWrist2PresetKey) || this.wrist2Presets[0];
+    },
     showBackButton() {
       if (!this.appMode) {
         return false;
@@ -926,6 +1088,7 @@ export default {
   mounted() {
     webSocketService.onMessage("scan_event", this.handleScanEvent);
     this.loadRuntimeSettings();
+    this.loadWristPresets();
     this.startManualStatusPolling();
     this.startArmStatusPolling();
   },
@@ -940,6 +1103,24 @@ export default {
     webSocketService.offMessage("scan_event");
   },
   methods: {
+    async loadWristPresets() {
+      try {
+        const response = await axios.get("/api/arduino/leonardo/wrist-presets");
+        this.wrist1Presets = normalizeWristPresets(
+          WRIST1_DEFAULT_PRESETS,
+          response.data?.wrist1,
+          clampWrist1LogicalAngle
+        );
+        this.wrist2Presets = normalizeWristPresets(
+          WRIST2_DEFAULT_PRESETS,
+          response.data?.wrist2,
+          clampWrist2LogicalAngle
+        );
+      } catch {
+        this.wrist1Presets = defaultWrist1Presets();
+        this.wrist2Presets = defaultWrist2Presets();
+      }
+    },
     async loadRuntimeSettings() {
       try {
         const response = await axios.get("/api/system/settings");
@@ -1357,6 +1538,107 @@ export default {
         }
       }
     },
+    wrist1PhysicalAngle(logicalAngle) {
+      return clampWrist1LogicalAngle(logicalAngle) + WRIST1_PHYSICAL_OFFSET;
+    },
+    wrist2PhysicalAngle(logicalAngle) {
+      return wrist2PhysicalAngleFromLogical(logicalAngle);
+    },
+    async saveWristPreset(wristIndex, presetKey, angle) {
+      await axios.post(
+        `/api/arduino/leonardo/wrist${wristIndex}/preset`,
+        { key: presetKey, angle },
+        this.manualLeonardoRequestConfig(1500)
+      );
+    },
+    updateWrist1ManualStatus(logicalAngle) {
+      const angle = clampWrist1LogicalAngle(logicalAngle);
+      this.manualStatus.wrist1 = angle;
+      this.manualStatus.wrist1Physical = this.wrist1PhysicalAngle(angle);
+      this.fetchManualStatus();
+    },
+    updateWrist2ManualStatus(logicalAngle) {
+      const angle = clampWrist2LogicalAngle(logicalAngle);
+      this.manualStatus.wrist2 = angle;
+      this.manualStatus.wrist2Physical = this.wrist2PhysicalAngle(angle);
+      this.fetchManualStatus();
+    },
+    toggleWrist1Calibration() {
+      this.wrist1CalibrationOpen = !this.wrist1CalibrationOpen;
+    },
+    toggleWrist2Calibration() {
+      this.wrist2CalibrationOpen = !this.wrist2CalibrationOpen;
+    },
+    async setWrist1Preset(preset) {
+      this.selectedWrist1PresetKey = preset.key;
+      const angle = clampWrist1LogicalAngle(preset.logical);
+      await this.runManualAction(
+        `w1:preset:${preset.key}`,
+        `Wrist 1 naar ${preset.label.toLowerCase()} gestuurd.`,
+        () => axios.post("/api/arduino/leonardo/wrist1/angle", { angle }, this.manualLeonardoRequestConfig()),
+        (data) => {
+          this.updateWrist1ManualStatus(this.parseManualStatusInt(data?.angle) ?? angle);
+        }
+      );
+    },
+    async calibrateWrist1Preset(delta) {
+      const preset = this.selectedWrist1Preset;
+      const nextAngle = clampWrist1LogicalAngle(preset.logical + delta);
+      await this.runManualAction(
+        `w1:cal:${preset.key}:${delta}`,
+        `${preset.label} gecalibreerd naar ${nextAngle}° logisch.`,
+        async () => {
+          const response = await axios.post(
+            "/api/arduino/leonardo/wrist1/angle",
+            { angle: nextAngle },
+            this.manualLeonardoRequestConfig()
+          );
+          await this.saveWristPreset(1, preset.key, nextAngle);
+          return response;
+        },
+        (data) => {
+          this.wrist1Presets = this.wrist1Presets.map((item) => (
+            item.key === preset.key ? { ...item, logical: nextAngle } : item
+          ));
+          this.updateWrist1ManualStatus(this.parseManualStatusInt(data?.angle) ?? nextAngle);
+        }
+      );
+    },
+    async setWrist2Preset(preset) {
+      this.selectedWrist2PresetKey = preset.key;
+      const angle = clampWrist2LogicalAngle(preset.logical);
+      await this.runManualAction(
+        `w2:preset:${preset.key}`,
+        `Wrist 2 naar ${preset.label.toLowerCase()} gestuurd.`,
+        () => axios.post("/api/arduino/leonardo/wrist2/angle", { angle }, this.manualLeonardoRequestConfig()),
+        (data) => {
+          this.updateWrist2ManualStatus(this.parseManualStatusInt(data?.angle) ?? angle);
+        }
+      );
+    },
+    async calibrateWrist2Preset(delta) {
+      const preset = this.selectedWrist2Preset;
+      const nextAngle = clampWrist2LogicalAngle(preset.logical + delta);
+      await this.runManualAction(
+        `w2:cal:${preset.key}:${delta}`,
+        `${preset.label} gecalibreerd naar ${nextAngle}° logisch.`,
+        async () => {
+          const response = await axios.post(
+            "/api/arduino/leonardo/wrist2/angle",
+            { angle: nextAngle },
+            this.manualLeonardoRequestConfig()
+          );
+          await this.saveWristPreset(2, preset.key, nextAngle);
+          return response;
+        },
+        (data) => {
+          this.wrist2Presets = this.wrist2Presets.map((item) => (
+            item.key === preset.key ? { ...item, logical: nextAngle } : item
+          ));
+          this.updateWrist2ManualStatus(this.parseManualStatusInt(data?.angle) ?? nextAngle);
+        }
+      );
+    },
     async stepWrist(wristIndex, delta) {
       const label = delta > 0 ? `Wrist ${wristIndex} +${delta}° gestuurd.` : `Wrist ${wristIndex} ${delta}° gestuurd.`;
       await this.runManualAction(
@@ -1380,6 +1662,7 @@ export default {
           axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/motor`, { enabled }, this.manualLeonardoRequestConfig()),
         () => {
           this.manualStatus[`vac${vacuumIndex}`] = enabled;
+          this.fetchManualStatus();
         }
       );
     },
@@ -1392,6 +1675,7 @@ export default {
           axios.post(`/api/arduino/leonardo/vacuum${vacuumIndex}/valve`, { enabled }, this.manualLeonardoRequestConfig()),
         () => {
           this.manualStatus[`valve${vacuumIndex}`] = enabled;
+          this.fetchManualStatus();
         }
       );
     },
@@ -2054,6 +2338,25 @@ export default {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
+}
+
+.wrist-preset-buttons :deep(.v-btn__content) {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.button-subtext {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.wrist-calibration-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
 
 .joystick-stack {

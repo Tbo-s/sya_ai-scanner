@@ -88,6 +88,17 @@ def _get_manual_xy_feed_rate() -> int:
     return int(os.getenv("APP_GRBL_MANUAL_XY_FEED_RATE", "120"))
 
 
+def _corexy_enabled() -> bool:
+    return os.getenv("APP_GRBL_COREXY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _corexy_motor_coordinates(x: float, y: float) -> tuple[float, float]:
+    """Optionally convert logical carriage coordinates to CoreXY motor coordinates."""
+    if not _corexy_enabled():
+        return float(x), float(y)
+    return float(x) + float(y), float(x) - float(y)
+
+
 def _get_xy_max(axis: str) -> float:
     normalized_axis = axis.upper()
     default_max = "5.5" if normalized_axis == "Y" else "4.0"
@@ -1328,6 +1339,40 @@ def home_axes_to_limits() -> dict[str, Any]:
     }
 
 
+def home_axes_x_y_z_to_limits() -> dict[str, Any]:
+    _set_arm_unhomed()
+    z_axis_enabled = _is_z_axis_enabled()
+
+    unlock_result = _unlock_grbl_if_needed()
+    nc_limit_setting = ensure_nc_limit_pin_setting()
+    x_report = _home_xy_axis("x")
+    y_report = _home_xy_axis("y")
+    z_report = _home_z_axis() if z_axis_enabled else _z_axis_disabled_report(
+        "home_z_axis",
+        already_at_limit=False,
+        stopped_by_limit=False,
+        limit_axes=[],
+        steps=0,
+        distance=0.0,
+        step_reports=[],
+    )
+    _set_arm_homed_zero()
+    zero_result = _zero_work_position(include_z=z_axis_enabled)
+
+    return {
+        "action": "home_axes_x_y_z_to_limits",
+        "homed": True,
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_axis_enabled else None},
+        "z_axis_enabled": z_axis_enabled,
+        "sequence": ["home_x", "home_y", "home_z"],
+        "axis_reports": [x_report, y_report],
+        "z_report": z_report,
+        "unlock_result": unlock_result,
+        "nc_limit_setting": nc_limit_setting,
+        "zero_result": zero_result,
+    }
+
+
 def _parse_sequence(raw_sequence: str) -> list[str]:
     parts = re.split(r"[|\n;]+", raw_sequence)
     return [part.strip() for part in parts if part.strip()]
@@ -1351,7 +1396,7 @@ def move_to_front_of_phone() -> dict[str, Any]:
         "results": [
             send_grbl("G21"),
             send_grbl("G90"),
-            send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}"),
+            send_grbl(_format_xy_absolute_command(target["x"], target["y"], feed_rate)),
         ],
     }
 
@@ -1370,7 +1415,7 @@ def move_to_back_of_phone() -> dict[str, Any]:
         "results": [
             send_grbl("G21"),
             send_grbl("G90"),
-            send_grbl(f"G1 X{target['x']} Y{target['y']} F{feed_rate}"),
+            send_grbl(_format_xy_absolute_command(target["x"], target["y"], feed_rate)),
         ],
     }
 
@@ -1412,17 +1457,23 @@ def _jog_z(delta_z: float, action: str) -> dict[str, Any]:
 
 
 def _format_xy_jog_command(delta_x: float, delta_y: float, feed_rate: int) -> str:
+    motor_x, motor_y = _corexy_motor_coordinates(delta_x, delta_y)
     axis_parts = []
 
-    if abs(delta_x) > 1e-9:
-        axis_parts.append(f"X{delta_x}")
-    if abs(delta_y) > 1e-9:
-        axis_parts.append(f"Y{delta_y}")
+    if abs(motor_x) > 1e-9:
+        axis_parts.append(f"X{motor_x}")
+    if abs(motor_y) > 1e-9:
+        axis_parts.append(f"Y{motor_y}")
 
     if not axis_parts:
         raise HTTPException(status_code=400, detail="At least one XY jog delta must be non-zero.")
 
     return f"G1 {' '.join(axis_parts)} F{feed_rate}"
+
+
+def _format_xy_absolute_command(target_x: float, target_y: float, feed_rate: int) -> str:
+    motor_x, motor_y = _corexy_motor_coordinates(target_x, target_y)
+    return f"G1 X{motor_x} Y{motor_y} F{feed_rate}"
 
 
 def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
@@ -1537,7 +1588,7 @@ def _move_with_distance_stop(x: float, y: float, action: str) -> dict[str, Any]:
     slow_feed = max(200, _feed_rate() // 6)
     threshold = _get_distance_threshold()
     send_grbl("G90", wait_for_ok=True)
-    send_grbl(f"G1 X{target['x']} Y{target['y']} F{slow_feed}", wait_for_ok=False)
+    send_grbl(_format_xy_absolute_command(target["x"], target["y"], slow_feed), wait_for_ok=False)
     for _ in range(200):
         result = _machine_svc.read_distance()
         distance = result.get("distance_cm", -1)
