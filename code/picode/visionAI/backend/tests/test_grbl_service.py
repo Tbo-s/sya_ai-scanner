@@ -300,6 +300,34 @@ def test_home_axes_to_limits_skips_z_when_z_axis_disabled(monkeypatch):
     assert result["position"] == {"x": 0.0, "y": 0.0, "z": None}
 
 
+def test_home_axes_to_limits_skips_z_when_z_homing_is_disabled(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("APP_GRBL_Z_AXIS_ENABLED", "1")
+    monkeypatch.setenv("APP_GRBL_HOME_Z_ENABLED", "0")
+    monkeypatch.setattr(grbl_service, "_unlock_grbl_if_needed", lambda: calls.append("unlock") or {"command": "$X"})
+    monkeypatch.setattr(grbl_service, "ensure_nc_limit_pin_setting", lambda: calls.append("limits") or {"configured": False})
+    monkeypatch.setattr(
+        grbl_service,
+        "_read_homing_limit_precheck",
+        lambda: calls.append("precheck") or {"limits": {"x": False, "y": False, "z": False}},
+    )
+    monkeypatch.setattr(grbl_service, "_get_home_xy_axis_order", lambda: ["x", "y"])
+    monkeypatch.setattr(
+        grbl_service,
+        "_home_xy_axis",
+        lambda axis, precheck_status=None: calls.append(f"xy_{axis}") or {"axis": axis},
+    )
+    monkeypatch.setattr(grbl_service, "_zero_work_position", lambda include_z: calls.append(f"zero_{include_z}") or [])
+
+    result = home_axes_to_limits()
+
+    assert calls == ["unlock", "limits", "precheck", "xy_x", "xy_y", "zero_False"]
+    assert result["z_axis_enabled"] is True
+    assert result["z_homing_enabled"] is False
+    assert result["sequence"] == ["home_xy"]
+
+
 def test_home_xy_axis_skips_motion_when_precheck_limit_is_active(monkeypatch):
     calls = []
 

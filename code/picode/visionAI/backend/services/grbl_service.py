@@ -142,6 +142,15 @@ def _is_z_axis_enabled() -> bool:
     return os.getenv("APP_GRBL_Z_AXIS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_home_z_enabled() -> bool:
+    return _is_z_axis_enabled() and os.getenv("APP_GRBL_HOME_Z_ENABLED", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _z_axis_disabled_report(action: str, **extra: Any) -> dict[str, Any]:
     return {
         "action": action,
@@ -1306,27 +1315,28 @@ def home_xy_to_limits() -> dict[str, Any]:
 def home_axes_to_limits() -> dict[str, Any]:
     _set_arm_unhomed()
     axis_reports = []
-    z_axis_enabled = _is_z_axis_enabled()
+    z_homing_enabled = _is_home_z_enabled()
 
     unlock_result = _unlock_grbl_if_needed()
     nc_limit_setting = ensure_nc_limit_pin_setting()
     limit_precheck = _read_homing_limit_precheck()
-    z_clearance = _home_z_clearance()
+    z_clearance = _home_z_clearance() if z_homing_enabled else _z_axis_disabled_report("home_z_clearance")
 
     for axis in _get_home_xy_axis_order():
         axis_reports.append(_home_xy_axis(axis, precheck_status=limit_precheck))
 
     _set_arm_homed_zero()
-    z_limit_precheck = _read_homing_limit_precheck() if z_axis_enabled else None
-    z_report = _home_z_axis(precheck_status=z_limit_precheck)
-    zero_result = _zero_work_position(include_z=z_axis_enabled)
+    z_limit_precheck = _read_homing_limit_precheck() if z_homing_enabled else None
+    z_report = _home_z_axis(precheck_status=z_limit_precheck) if z_homing_enabled else _z_axis_disabled_report("home_z_axis")
+    zero_result = _zero_work_position(include_z=z_homing_enabled)
 
     return {
         "action": "home_axes_to_limits",
         "homed": True,
-        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_axis_enabled else None},
-        "z_axis_enabled": z_axis_enabled,
-        "sequence": ["z_clearance", "home_xy", "home_z"],
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_homing_enabled else None},
+        "z_axis_enabled": _is_z_axis_enabled(),
+        "z_homing_enabled": z_homing_enabled,
+        "sequence": ["z_clearance", "home_xy", "home_z"] if z_homing_enabled else ["home_xy"],
         "limit_precheck": limit_precheck,
         "z_clearance": z_clearance,
         "axis_reports": axis_reports,
@@ -1340,13 +1350,13 @@ def home_axes_to_limits() -> dict[str, Any]:
 
 def home_axes_x_y_z_to_limits() -> dict[str, Any]:
     _set_arm_unhomed()
-    z_axis_enabled = _is_z_axis_enabled()
+    z_homing_enabled = _is_home_z_enabled()
 
     unlock_result = _unlock_grbl_if_needed()
     nc_limit_setting = ensure_nc_limit_pin_setting()
     x_report = _home_xy_axis("x")
     y_report = _home_xy_axis("y")
-    z_report = _home_z_axis() if z_axis_enabled else _z_axis_disabled_report(
+    z_report = _home_z_axis() if z_homing_enabled else _z_axis_disabled_report(
         "home_z_axis",
         already_at_limit=False,
         stopped_by_limit=False,
@@ -1356,14 +1366,15 @@ def home_axes_x_y_z_to_limits() -> dict[str, Any]:
         step_reports=[],
     )
     _set_arm_homed_zero()
-    zero_result = _zero_work_position(include_z=z_axis_enabled)
+    zero_result = _zero_work_position(include_z=z_homing_enabled)
 
     return {
         "action": "home_axes_x_y_z_to_limits",
         "homed": True,
-        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_axis_enabled else None},
-        "z_axis_enabled": z_axis_enabled,
-        "sequence": ["home_x", "home_y", "home_z"],
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0 if z_homing_enabled else None},
+        "z_axis_enabled": _is_z_axis_enabled(),
+        "z_homing_enabled": z_homing_enabled,
+        "sequence": ["home_x", "home_y", "home_z"] if z_homing_enabled else ["home_x", "home_y"],
         "axis_reports": [x_report, y_report],
         "z_report": z_report,
         "unlock_result": unlock_result,
