@@ -22,3 +22,5 @@ improvements:
 -A.I model trainen
 
 -Panelen monteren zijkant/onderkant/bovenkant (dit oftwel via t-bouten, of door frame uit te halen en hier gewone bouten in te steken).
+
+-Automatische flow dan nog eens checken/finetunen met exacte coordinaten. 
