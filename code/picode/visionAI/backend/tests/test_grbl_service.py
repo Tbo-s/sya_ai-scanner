@@ -658,3 +658,30 @@ def test_run_grbl_commands_falls_back_to_detected_grbl_port(monkeypatch):
 
     assert [ser.port for ser in created_serials] == ["/dev/missing", "/dev/ttyUSB0", "/dev/ttyUSB1"]
     assert sent_commands == [("/dev/ttyUSB1", "G21", True)]
+
+
+def test_serial_ready_check_waits_for_status_after_startup_banner(monkeypatch):
+    class FakeSerial:
+        def __init__(self):
+            self.writes = []
+            self.responses = [
+                b"Grbl 1.1g ['$' for help]\n",
+                b"<Idle|MPos:0.000,0.000,0.000|FS:0,0>\n",
+            ]
+
+        def reset_input_buffer(self):
+            return None
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def readline(self):
+            if self.responses:
+                return self.responses.pop(0)
+            return b""
+
+    monkeypatch.setenv("APP_GRBL_STATUS_TIMEOUT_S", "0.1")
+    fake_serial = FakeSerial()
+
+    assert grbl_service._serial_looks_like_grbl(fake_serial, []) is True
+    assert fake_serial.writes == [b"?", b"?"]

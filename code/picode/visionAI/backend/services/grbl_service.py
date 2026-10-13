@@ -827,8 +827,12 @@ def _serial_looks_like_grbl(ser: serial.Serial, startup_lines: list[str]) -> boo
             text = raw.decode("utf-8", errors="ignore").strip()
             if not text:
                 continue
-            if "grbl" in text.lower() or _parse_grbl_status_line(text) is not None:
+            if _parse_grbl_status_line(text) is not None:
                 return True
+            if "grbl" in text.lower():
+                # The controller can emit its boot banner after the first probe.
+                # Probe again and wait for a realtime status before sending G-code.
+                ser.write(b"?")
     except Exception:
         return False
 
