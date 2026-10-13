@@ -1154,9 +1154,12 @@ def tray_to_gate_position() -> dict:
     return {"command": "TRAY_OUT", "sent": True}
 
 
-def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
+def wait_for_gate_done(expected_position: Optional[str] = None, timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_GATE_MOVE_TIMEOUT_S", "10"))
+    expected = expected_position.upper() if expected_position else None
+    if expected not in {None, "UP", "DOWN"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported gate position: {expected_position}")
     started = time.time()
     saw_motion = False
     last_values: dict[str, str] = {}
@@ -1172,7 +1175,8 @@ def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
             gate_pos = str(values.get("gatePos", "")).upper()
             if gate_state not in {-1, 0}:
                 saw_motion = True
-            if gate_state == 0 and gate_pos in {"UP", "DOWN"} and (saw_motion or time.time() - started >= 0.25):
+            position_matches = gate_pos == expected if expected else gate_pos in {"UP", "DOWN"}
+            if gate_state == 0 and position_matches and (saw_motion or time.time() - started >= 0.25):
                 return {"done": True, "status": values, "response": last_lines}
         time.sleep(0.05)
 
@@ -1182,9 +1186,12 @@ def wait_for_gate_done(timeout_s: Optional[float] = None) -> dict:
     )
 
 
-def wait_for_tray_done(timeout_s: Optional[float] = None) -> dict:
+def wait_for_tray_done(expected_position: Optional[str] = None, timeout_s: Optional[float] = None) -> dict:
     if timeout_s is None:
         timeout_s = float(os.getenv("APP_TRAY_MOVE_TIMEOUT_S", "10"))
+    expected = expected_position.upper() if expected_position else None
+    if expected not in {None, "IN", "OUT"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported tray position: {expected_position}")
     started = time.time()
     saw_motion = False
     last_values: dict[str, str] = {}
@@ -1200,7 +1207,8 @@ def wait_for_tray_done(timeout_s: Optional[float] = None) -> dict:
             tray_pos = str(values.get("trayPos", "")).upper()
             if tray_state not in {-1, 0}:
                 saw_motion = True
-            if tray_state == 0 and tray_pos in {"IN", "OUT"} and (saw_motion or time.time() - started >= 0.25):
+            position_matches = tray_pos == expected if expected else tray_pos in {"IN", "OUT"}
+            if tray_state == 0 and position_matches and (saw_motion or time.time() - started >= 0.25):
                 return {"done": True, "status": values, "response": last_lines}
         time.sleep(0.05)
 

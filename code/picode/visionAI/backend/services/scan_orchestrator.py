@@ -193,16 +193,16 @@ class ScanOrchestrator:
 
         await self._set_state(session, FlowState.LOAD_DEVICE)
         await self._step(session, 19, "gate_open", machine_service.open_gate)
-        await self._step(session, 19, "gate_open_wait", machine_service.wait_for_gate_done)
+        await self._step(session, 19, "gate_open_wait", machine_service.wait_for_gate_done, "UP")
         await self._step(session, 20, "tray_out", machine_service.tray_out)
-        await self._step(session, 20, "tray_out_wait", machine_service.wait_for_tray_done)
+        await self._step(session, 20, "tray_out_wait", machine_service.wait_for_tray_done, "OUT")
         await self._await_user(session, 21, "phone_added_check", "Toestel toegevoegd?")
 
         await self._set_state(session, FlowState.CLOSE_BOX)
         await self._step(session, 23, "tray_in", machine_service.tray_in)
-        await self._step(session, 23, "tray_in_wait", machine_service.wait_for_tray_done)
+        await self._step(session, 23, "tray_in_wait", machine_service.wait_for_tray_done, "IN")
         await self._step(session, 24, "gate_close", machine_service.close_gate)
-        await self._step(session, 24, "gate_close_wait", machine_service.wait_for_gate_done)
+        await self._step(session, 24, "gate_close_wait", machine_service.wait_for_gate_done, "DOWN")
 
         await self._set_state(session, FlowState.CAPTURE_FRONT)
         presets = {
