@@ -209,9 +209,9 @@
                   icon
                   size="x-large"
                   :loading="isManualActionBusy('xy:forward')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
                   aria-label="Arm naar voren"
-                  @click="jogXY(0, -manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
+                  @click="jogXY(0, manualXyStep, 'Arm naar voren gestuurd.', 'xy:forward')"
                 >
                   <v-icon>mdi-arrow-up</v-icon>
                 </v-btn>
@@ -247,9 +247,9 @@
                   icon
                   size="x-large"
                   :loading="isManualActionBusy('xy:back')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyStep)"
                   aria-label="Arm naar achter"
-                  @click="jogXY(0, manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
+                  @click="jogXY(0, -manualXyStep, 'Arm naar achter gestuurd.', 'xy:back')"
                 >
                   <v-icon>mdi-arrow-down</v-icon>
                 </v-btn>
@@ -266,9 +266,9 @@
                   icon
                   size="large"
                   :loading="isManualActionBusy('xy:fine:forward')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyFineStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyFineStep)"
                   aria-label="Arm naar voren fijn"
-                  @click="jogXY(0, -manualXyFineStep, 'Fijne stap naar voren gestuurd.', 'xy:fine:forward')"
+                  @click="jogXY(0, manualXyFineStep, 'Fijne stap naar voren gestuurd.', 'xy:fine:forward')"
                 >
                   <v-icon>mdi-arrow-up</v-icon>
                 </v-btn>
@@ -304,9 +304,9 @@
                   icon
                   size="large"
                   :loading="isManualActionBusy('xy:fine:back')"
-                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, manualXyFineStep)"
+                  :disabled="Boolean(manualControlBusy) || xyLimitBlocks(0, -manualXyFineStep)"
                   aria-label="Arm naar achter fijn"
-                  @click="jogXY(0, manualXyFineStep, 'Fijne stap naar achter gestuurd.', 'xy:fine:back')"
+                  @click="jogXY(0, -manualXyFineStep, 'Fijne stap naar achter gestuurd.', 'xy:fine:back')"
                 >
                   <v-icon>mdi-arrow-down</v-icon>
                 </v-btn>

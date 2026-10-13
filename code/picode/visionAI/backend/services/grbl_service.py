@@ -1564,11 +1564,11 @@ def manual_xy_right() -> dict[str, Any]:
 
 
 def manual_xy_forward() -> dict[str, Any]:
-    return _jog_xy(0.0, abs(_get_manual_xy_step()), "manual_xy_forward")
+    return _jog_xy(0.0, -abs(_get_manual_xy_step()), "manual_xy_forward")
 
 
 def manual_xy_back() -> dict[str, Any]:
-    return _jog_xy(0.0, -abs(_get_manual_xy_step()), "manual_xy_back")
+    return _jog_xy(0.0, abs(_get_manual_xy_step()), "manual_xy_back")
 
 
 def manual_xy_move(delta_x: float, delta_y: float) -> dict[str, Any]:
