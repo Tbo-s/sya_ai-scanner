@@ -187,7 +187,7 @@ class ScanOrchestrator:
         self._user_event.clear()
 
     async def _execute_sequence(self, session: ScanSession):
-        from controller.camera import camera_manager, take_photo
+        from controller.camera import camera_manager, take_photo, take_pi_photo
         from services import grbl_service, machine_service
         from services.wrist_preset_service import get_wrist_presets
 
@@ -218,9 +218,18 @@ class ScanOrchestrator:
         start_x = float(os.getenv("APP_GRBL_SCAN_START_X", "2.8"))
         start_y = float(os.getenv("APP_GRBL_SCAN_START_Y", "0.6"))
         vacuum_off_y = float(os.getenv("APP_GRBL_SCAN_VACUUM_OFF_Y", "0.8"))
+        vacuum_hold_s = max(0.0, float(os.getenv("APP_GRBL_SCAN_VACUUM_HOLD_S", "2.0")))
         photo_y = float(os.getenv("APP_GRBL_SCAN_PHOTO_Y", "2.0"))
         second_photo_x = float(os.getenv("APP_GRBL_SCAN_SECOND_PHOTO_X", "4.0"))
         z_lift = float(os.getenv("APP_GRBL_SCAN_Z_LIFT", "6.0"))
+        camera_source = os.getenv("APP_SCAN_CAMERA_SOURCE", "pi").strip().lower()
+        if camera_source not in {"pi", "usb"}:
+            raise RuntimeError("APP_SCAN_CAMERA_SOURCE must be 'pi' or 'usb'.")
+
+        async def capture_scan_photo(label: str) -> dict:
+            if camera_source == "pi":
+                return await asyncio.to_thread(take_pi_photo, label, session.session_id)
+            return await asyncio.to_thread(take_photo, label, session.session_id)
 
         await self._step(session, 25, "arm_x_start", grbl_service.move_axis_absolute, "X", start_x, "scan_x_start", scan_feed_rate)
         await self._step(session, 26, "wrist1_camera", machine_service.set_wrist1, wrist1_camera)
@@ -229,28 +238,31 @@ class ScanOrchestrator:
         await self._step(session, 29, "vacuum1_on", machine_service.set_vacuum1_motor, True)
         await self._step(session, 30, "vacuum2_on", machine_service.set_vacuum2_motor, True)
         await self._step(session, 31, "arm_y_vacuum_off", grbl_service.move_axis_absolute, "Y", vacuum_off_y, "scan_y_vacuum_off", scan_feed_rate)
+        await asyncio.sleep(vacuum_hold_s)
         await self._step(session, 32, "vacuum1_off", machine_service.set_vacuum1_motor, False)
         await self._step(session, 33, "vacuum2_off", machine_service.set_vacuum2_motor, False)
         await self._step(session, 34, "arm_z_lift", grbl_service.move_z_relative, z_lift, "scan_z_lift", scan_feed_rate)
         await self._step(session, 35, "arm_y_photo", grbl_service.move_axis_absolute, "Y", photo_y, "scan_y_photo", scan_feed_rate)
 
-        await asyncio.to_thread(camera_manager.start)
-        await asyncio.to_thread(camera_manager.wait_for_frame, 5.0)
-        result = await asyncio.to_thread(take_photo, "photo_1", session.session_id)
+        if camera_source == "usb":
+            await asyncio.to_thread(camera_manager.start)
+            await asyncio.to_thread(camera_manager.wait_for_frame, 5.0)
+
+        result = await capture_scan_photo("photo_1")
         session.photo_paths.append(result["path"])
         await self._broadcast("step_complete", 36, "photo_1", result)
 
         await self._step(session, 37, "wrist1_wall", machine_service.set_wrist1, wrist1_wall)
         await self._step(session, 38, "arm_x_photo_2", grbl_service.move_axis_absolute, "X", second_photo_x, "scan_x_photo_2", scan_feed_rate)
-        result = await asyncio.to_thread(take_photo, "photo_2", session.session_id)
+        result = await capture_scan_photo("photo_2")
         session.photo_paths.append(result["path"])
         await self._broadcast("step_complete", 39, "photo_2", result)
         await self._step(session, 40, "wrist2_vertical_left", machine_service.set_wrist2, wrist2_vertical_left)
-        result = await asyncio.to_thread(take_photo, "photo_3", session.session_id)
+        result = await capture_scan_photo("photo_3")
         session.photo_paths.append(result["path"])
         await self._broadcast("step_complete", 41, "photo_3", result)
         await self._step(session, 42, "wrist2_vertical_right", machine_service.set_wrist2, wrist2_vertical_right)
-        result = await asyncio.to_thread(take_photo, "photo_4", session.session_id)
+        result = await capture_scan_photo("photo_4")
         session.photo_paths.append(result["path"])
         await self._broadcast("step_complete", 43, "photo_4", result)
 

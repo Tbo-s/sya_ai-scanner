@@ -681,6 +681,20 @@ def take_photo(label: str, session_id: str) -> dict:
     return {"path": str(file_path), "label": label, "session_id": session_id}
 
 
+def take_pi_photo(label: str, session_id: str) -> dict:
+    session_dir = _get_photo_storage_dir() / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    file_path = session_dir / f"{label}.jpg"
+    file_path.write_bytes(
+        _capture_pi_csi_jpeg(
+            PI_CAMERA_FULL_WIDTH,
+            PI_CAMERA_FULL_HEIGHT,
+            _get_pi_camera_warmup_ms(),
+        )
+    )
+    return {"path": str(file_path), "label": label, "session_id": session_id, "source": "pi"}
+
+
 def _encode_jpeg(frame) -> bytes:
     ok, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), PI_CAMERA_JPEG_QUALITY])
     if not ok:
