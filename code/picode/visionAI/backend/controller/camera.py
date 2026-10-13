@@ -408,6 +408,11 @@ def _capture_pi_csi_frame(width: int, height: int, warmup_ms: int):
 
     picam2 = None
     try:
+        if not Picamera2.global_camera_info():
+            raise HTTPException(
+                status_code=503,
+                detail="No CSI camera detected by libcamera. Power off the Raspberry Pi and check the CSI ribbon cable and camera connection.",
+            )
         picam2 = Picamera2()
         config = picam2.create_still_configuration(main={"size": (width, height)})
         picam2.configure(config)
@@ -597,6 +602,8 @@ def _capture_pi_csi_jpeg(width: int, height: int, warmup_ms: int) -> bytes:
         return _encode_jpeg(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     except HTTPException as exc:
         picamera_error = exc.detail
+        if exc.status_code == 503:
+            raise
 
     try:
         return _capture_pi_still_jpeg(width, height, warmup_ms)
