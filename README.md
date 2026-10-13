@@ -20,3 +20,5 @@ improvements:
 -api call is aanwezig maar gaat momenteel nergens naartoe
 
 -A.I model trainen
+
+-Panelen monteren zijkant/onderkant/bovenkant (dit oftwel via t-bouten, of door frame uit te halen en hier gewone bouten in te steken).
