@@ -4,6 +4,7 @@ ONLY me and ''god'' understand this code, good luck to everyone else
 
 improvements:
 -pcb ontwerpen voor zoveel mogelijk draden weg te werken
+
 -z as redesignen met pogo pins
   <img width="500" height="300" alt="image" src="https://github.com/user-attachments/assets/4b160aa4-8b28-490f-b6be-bf2f0fdc2b25" />
   
