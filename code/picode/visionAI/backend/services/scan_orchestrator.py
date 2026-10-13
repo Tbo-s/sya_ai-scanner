@@ -188,9 +188,8 @@ class ScanOrchestrator:
 
     async def _execute_sequence(self, session: ScanSession):
         from controller.camera import camera_manager, take_photo
-        from services import ai_damage_service, grbl_service, machine_service, scan_upload_service
-
-        vacuum_dwell = float(os.getenv("APP_VACUUM_DWELL_S", "1.0"))
+        from services import grbl_service, machine_service
+        from services.wrist_preset_service import get_wrist_presets
 
         await self._set_state(session, FlowState.LOAD_DEVICE)
         await self._step(session, 19, "gate_open", machine_service.open_gate)
@@ -206,97 +205,62 @@ class ScanOrchestrator:
         await self._step(session, 24, "gate_close_wait", machine_service.wait_for_gate_done)
 
         await self._set_state(session, FlowState.CAPTURE_FRONT)
-        await self._step(session, 25, "arm_approach_front", grbl_service.move_to_front_slow_with_distance_stop)
-        await self._step(session, 27, "vacuum_on", machine_service.vacuum_on)
-        await asyncio.sleep(vacuum_dwell)
-        await self._step(session, 28, "z_up", grbl_service.z_up)
-        await self._step(session, 29, "tray_to_gate", machine_service.tray_to_gate_position)
-        await self._step(session, 29, "tray_to_gate_wait", machine_service.wait_for_tray_done)
+        presets = {
+            wrist_key: {preset["key"]: int(preset["logical"]) for preset in values}
+            for wrist_key, values in get_wrist_presets().items()
+        }
+        wrist1_camera = presets["wrist1"]["camera"]
+        wrist1_wall = presets["wrist1"]["wall"]
+        wrist2_horizontal = presets["wrist2"]["horizontal"]
+        wrist2_vertical_left = presets["wrist2"]["vertical_left"]
+        wrist2_vertical_right = presets["wrist2"]["vertical_right"]
+        scan_feed_rate = int(os.getenv("APP_GRBL_AUTO_SCAN_FEED_RATE", "1500"))
+        start_x = float(os.getenv("APP_GRBL_SCAN_START_X", "2.8"))
+        start_y = float(os.getenv("APP_GRBL_SCAN_START_Y", "0.6"))
+        vacuum_off_y = float(os.getenv("APP_GRBL_SCAN_VACUUM_OFF_Y", "0.8"))
+        photo_y = float(os.getenv("APP_GRBL_SCAN_PHOTO_Y", "2.0"))
+        second_photo_x = float(os.getenv("APP_GRBL_SCAN_SECOND_PHOTO_X", "4.0"))
+        z_lift = float(os.getenv("APP_GRBL_SCAN_Z_LIFT", "6.0"))
+
+        await self._step(session, 25, "arm_x_start", grbl_service.move_axis_absolute, "X", start_x, "scan_x_start", scan_feed_rate)
+        await self._step(session, 26, "wrist1_camera", machine_service.set_wrist1, wrist1_camera)
+        await self._step(session, 27, "wrist2_horizontal", machine_service.set_wrist2, wrist2_horizontal)
+        await self._step(session, 28, "arm_y_start", grbl_service.move_axis_absolute, "Y", start_y, "scan_y_start", scan_feed_rate)
+        await self._step(session, 29, "vacuum1_on", machine_service.set_vacuum1_motor, True)
+        await self._step(session, 30, "vacuum2_on", machine_service.set_vacuum2_motor, True)
+        await self._step(session, 31, "arm_y_vacuum_off", grbl_service.move_axis_absolute, "Y", vacuum_off_y, "scan_y_vacuum_off", scan_feed_rate)
+        await self._step(session, 32, "vacuum1_off", machine_service.set_vacuum1_motor, False)
+        await self._step(session, 33, "vacuum2_off", machine_service.set_vacuum2_motor, False)
+        await self._step(session, 34, "arm_z_lift", grbl_service.move_z_relative, z_lift, "scan_z_lift", scan_feed_rate)
+        await self._step(session, 35, "arm_y_photo", grbl_service.move_axis_absolute, "Y", photo_y, "scan_y_photo", scan_feed_rate)
+
         await asyncio.to_thread(camera_manager.start)
         await asyncio.to_thread(camera_manager.wait_for_frame, 5.0)
-        wrist2_min = machine_service.wrist_min_angle(2)
-        wrist2_max = machine_service.wrist_max_angle(2)
-        wrist1_max = machine_service.wrist_max_angle(1)
-        wrist1_home = machine_service.wrist1_home_angle()
-        await self._step(session, 30, "wrist1_neutral", machine_service.set_wrist1, wrist1_home)
+        result = await asyncio.to_thread(take_photo, "photo_1", session.session_id)
+        session.photo_paths.append(result["path"])
+        await self._broadcast("step_complete", 36, "photo_1", result)
 
-        for step_num, label in ((31, "front_side_1"), (33, "front_side_2"), (35, "front_side_3")):
-            result = await asyncio.to_thread(take_photo, label, session.session_id)
-            session.photo_paths.append(result["path"])
-            await self._broadcast("step_complete", step_num, f"photo_{label}", result)
-            if step_num == 31:
-                await self._step(session, 32, "wrist2_neg90", machine_service.set_wrist2, wrist2_min)
-            elif step_num == 33:
-                await self._step(session, 34, "wrist2_pos90", machine_service.set_wrist2, wrist2_max)
+        await self._step(session, 37, "wrist1_wall", machine_service.set_wrist1, wrist1_wall)
+        await self._step(session, 38, "arm_x_photo_2", grbl_service.move_axis_absolute, "X", second_photo_x, "scan_x_photo_2", scan_feed_rate)
+        result = await asyncio.to_thread(take_photo, "photo_2", session.session_id)
+        session.photo_paths.append(result["path"])
+        await self._broadcast("step_complete", 39, "photo_2", result)
+        await self._step(session, 40, "wrist2_vertical_left", machine_service.set_wrist2, wrist2_vertical_left)
+        result = await asyncio.to_thread(take_photo, "photo_3", session.session_id)
+        session.photo_paths.append(result["path"])
+        await self._broadcast("step_complete", 41, "photo_3", result)
+        await self._step(session, 42, "wrist2_vertical_right", machine_service.set_wrist2, wrist2_vertical_right)
+        result = await asyncio.to_thread(take_photo, "photo_4", session.session_id)
+        session.photo_paths.append(result["path"])
+        await self._broadcast("step_complete", 43, "photo_4", result)
 
-        await self._step(session, 36, "wrist1_pos90", machine_service.set_wrist1, wrist1_max)
-        await self._step(session, 37, "tray_center", machine_service.tray_in)
-        await self._step(session, 37, "tray_center_wait", machine_service.wait_for_tray_done)
-        await self._step(session, 38, "wrist_home", machine_service.wrist_home)
-        await self._step(session, 39, "z_down", grbl_service.z_down)
-        await self._step(session, 40, "vacuum_off", machine_service.vacuum_off)
-
-        await self._set_state(session, FlowState.CAPTURE_BACK)
-        await self._step(session, 41, "arm_to_back_rapid", grbl_service.move_to_back_of_phone)
-        await self._step(session, 42, "arm_approach_back", grbl_service.move_to_back_slow_with_distance_stop)
-        await self._step(session, 43, "vacuum_on_back", machine_service.vacuum_on)
-        await asyncio.sleep(vacuum_dwell)
-        await self._step(session, 44, "z_up_back", grbl_service.z_up)
-        await self._step(session, 45, "tray_to_gate_back", machine_service.tray_to_gate_position)
-        await self._step(session, 45, "tray_to_gate_back_wait", machine_service.wait_for_tray_done)
-        await self._step(session, 46, "wrist1_neutral_back", machine_service.set_wrist1, wrist1_home)
-
-        for step_num, label in ((47, "back_side_1"), (49, "back_side_2"), (51, "back_side_3")):
-            result = await asyncio.to_thread(take_photo, label, session.session_id)
-            session.photo_paths.append(result["path"])
-            await self._broadcast("step_complete", step_num, f"photo_{label}", result)
-            if step_num == 47:
-                await self._step(session, 48, "wrist2_neg90_back", machine_service.set_wrist2, wrist2_min)
-            elif step_num == 49:
-                await self._step(session, 50, "wrist2_pos90_back", machine_service.set_wrist2, wrist2_max)
-
-        await self._step(session, 52, "wrist1_pos90_back", machine_service.set_wrist1, wrist1_max)
-        await self._set_state(session, FlowState.UPLOAD_RESULTS)
-        session.current_step = 53
-        await self._broadcast("step_complete", 53, "ai_analyzing", {"photo_count": len(session.photo_paths)})
-        ai_result = await asyncio.to_thread(
-            ai_damage_service.analyze_photos,
-            session.imei,
-            session.session_id,
-            session.photo_paths,
-            session.max_value_eur,
-        )
-        session.ai_result = ai_result.model_dump()
-        await self._broadcast("step_complete", 53, "ai_done", session.ai_result)
-        upload_result = await asyncio.to_thread(
-            scan_upload_service.upload_scan_results,
-            imei=session.imei,
-            session_id=session.session_id,
-            device_model=session.device_model,
-            max_value_eur=session.max_value_eur,
-            photo_paths=session.photo_paths,
-            ai_result=session.ai_result,
-        )
-        session.upload_result = upload_result
-        await self._broadcast("step_complete", 53, "scan_upload", upload_result)
-
-        await self._set_state(session, FlowState.RETURN_DEVICE)
-        await self._step(session, 54, "tray_center_back", machine_service.tray_in)
-        await self._step(session, 54, "tray_center_back_wait", machine_service.wait_for_tray_done)
-        await self._step(session, 55, "wrist_home_back", machine_service.wrist_home)
-        await self._step(session, 56, "z_down_back", grbl_service.z_down)
-        await self._step(session, 57, "vacuum_off_back", machine_service.vacuum_off)
-        await self._step(session, 58, "gate_open_return", machine_service.open_gate)
-        await self._step(session, 58, "gate_open_return_wait", machine_service.wait_for_gate_done)
-        await self._step(session, 59, "tray_out_return", machine_service.tray_out)
-        await self._step(session, 59, "tray_out_return_wait", machine_service.wait_for_tray_done)
         session.status = "complete"
         session.state = FlowState.SHOW_PRICE
-        session.current_step = 60
+        session.current_step = 44
         await self._broadcast(
             "scan_complete",
-            60,
-            "phone_retrieval",
-            {"ai_result": session.ai_result},
+            44,
+            "capture_complete",
+            {"ai_result": None, "photo_count": len(session.photo_paths)},
             state=FlowState.SHOW_PRICE,
         )

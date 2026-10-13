@@ -1381,6 +1381,55 @@ def _feed_rate() -> int:
     return int(os.getenv("APP_GRBL_FEED_RATE", "3000"))
 
 
+def _auto_scan_feed_rate() -> int:
+    return max(1, int(os.getenv("APP_GRBL_AUTO_SCAN_FEED_RATE", "1500")))
+
+
+def move_axis_absolute(axis: str, target: float, action: str, feed_rate: Optional[int] = None) -> dict[str, Any]:
+    normalized_axis = axis.upper()
+    if normalized_axis not in {"X", "Y"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported absolute scan axis: {axis}")
+
+    bounded_target = min(_get_xy_max(normalized_axis), max(0.0, float(target)))
+    active_feed_rate = feed_rate if feed_rate is not None else _auto_scan_feed_rate()
+    return {
+        "action": action,
+        "axis": normalized_axis,
+        "requested_target": float(target),
+        "target": bounded_target,
+        "feed_rate": active_feed_rate,
+        "results": _run_grbl_commands(
+            [
+                ("G21", True),
+                ("G90", True),
+                (f"G1 {normalized_axis}{bounded_target} F{active_feed_rate}", True),
+            ],
+            wait_for_idle=True,
+        ),
+    }
+
+
+def move_z_relative(delta: float, action: str, feed_rate: Optional[int] = None) -> dict[str, Any]:
+    if not _is_z_axis_enabled():
+        return _z_axis_disabled_report(action, delta=delta)
+
+    active_feed_rate = feed_rate if feed_rate is not None else _auto_scan_feed_rate()
+    return {
+        "action": action,
+        "delta": float(delta),
+        "feed_rate": active_feed_rate,
+        "results": _run_grbl_commands(
+            [
+                ("G21", True),
+                ("G91", True),
+                (f"G1 Z{float(delta)} F{active_feed_rate}", True),
+                ("G90", True),
+            ],
+            wait_for_idle=True,
+        ),
+    }
+
+
 def move_to_front_of_phone() -> dict[str, Any]:
     x = float(os.getenv("APP_GRBL_FRONT_X", "50.0"))
     y = float(os.getenv("APP_GRBL_FRONT_Y", "100.0"))
