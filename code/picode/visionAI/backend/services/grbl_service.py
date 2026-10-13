@@ -805,9 +805,6 @@ def _candidate_grbl_ports(configured_port: str) -> list[str]:
 
 
 def _serial_looks_like_grbl(ser: serial.Serial, startup_lines: list[str]) -> bool:
-    if any("grbl" in line.lower() for line in startup_lines):
-        return True
-
     try:
         if hasattr(ser, "reset_input_buffer"):
             ser.reset_input_buffer()
@@ -826,6 +823,8 @@ def _serial_looks_like_grbl(ser: serial.Serial, startup_lines: list[str]) -> boo
     except Exception:
         return False
 
+    # A startup banner alone can arrive before the controller accepts G-code.
+    # Keep the connection only after a realtime status probe confirms it is ready.
     return False
 
 
