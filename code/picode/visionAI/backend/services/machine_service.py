@@ -466,6 +466,15 @@ def _derive_tray_position_from_status(values: dict[str, str]) -> str:
     return "UNKNOWN"
 
 
+def _tray_position_is_physically_confirmed(values: dict[str, str], expected: Optional[str]) -> bool:
+    reported_position = str(values.get("trayPos", "")).upper()
+    switch_position = _derive_tray_position_from_status(values)
+
+    if expected:
+        return reported_position == expected and switch_position == expected
+    return reported_position in {"IN", "OUT"} and reported_position == switch_position
+
+
 def _contains_token(lines: list[str], token: str) -> bool:
     return any(token in line for line in lines)
 
@@ -1204,15 +1213,17 @@ def wait_for_tray_done(expected_position: Optional[str] = None, timeout_s: Optio
         if values:
             last_values = values
             tray_state = _get_status_int(values, "trayState", -1)
-            tray_pos = str(values.get("trayPos", "")).upper()
             if tray_state not in {-1, 0}:
                 saw_motion = True
-            position_matches = tray_pos == expected if expected else tray_pos in {"IN", "OUT"}
+            position_matches = _tray_position_is_physically_confirmed(values, expected)
             if tray_state == 0 and position_matches and (saw_motion or time.time() - started >= 0.25):
                 return {"done": True, "status": values, "response": last_lines}
         time.sleep(0.05)
 
     raise HTTPException(
         status_code=504,
-        detail=f"Tray movement timed out. Last status: {last_values or last_lines or 'no response'}",
+        detail=(
+            "Tray movement timed out before physical end-switch confirmation. "
+            f"Expected {expected or 'IN or OUT'}. Last status: {last_values or last_lines or 'no response'}"
+        ),
     )

@@ -1,5 +1,6 @@
 from services import machine_service
 from services.machine_service import (
+    _tray_position_is_physically_confirmed,
     _derive_tray_position_from_status,
     _extract_gate_position,
     _extract_status_line,
@@ -96,6 +97,12 @@ def test_derive_tray_position_in():
 def test_derive_tray_position_unknown():
     position = _derive_tray_position_from_status({"trayOutSw": "1", "trayInSw": "1"})
     assert position == "UNKNOWN"
+
+
+def test_tray_position_requires_matching_report_and_end_switch():
+    assert _tray_position_is_physically_confirmed({"trayPos": "IN", "trayOutSw": "0", "trayInSw": "1"}, "IN")
+    assert not _tray_position_is_physically_confirmed({"trayPos": "IN", "trayOutSw": "0", "trayInSw": "0"}, "IN")
+    assert not _tray_position_is_physically_confirmed({"trayPos": "IN", "trayOutSw": "1", "trayInSw": "0"}, "IN")
 
 
 def test_vacuum_motor_waits_for_ack(monkeypatch):
