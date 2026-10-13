@@ -10,6 +10,11 @@ improvements:
   <img width="500" height="300" alt="image" src="https://github.com/user-attachments/assets/4b160aa4-8b28-490f-b6be-bf2f0fdc2b25" />
   
   zodat er geen draden in de z-as lopen, maar de pogo pins lopen over koperen lijnen.
+  
+  (de motors + afstandsensor ga je dus naar die pogo pins verbinden in de z-as (binnenste stuk))
+
+  aan buitenste stuk hang je koperen ''leidingen'' waar de pogo pins connectie maken, en aan bovenkant van die leidingen hang je je draden die dan naar leonardo/voeding gaan
+  
 
 -lichten difusen zodat je geen individuele leds ziet op scherm van toestel
 
