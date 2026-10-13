@@ -8,6 +8,7 @@ from services.grbl_service import (
     is_safe_grbl_command,
     manual_z_down,
     manual_z_up,
+    move_xy_relative,
     z_down,
     z_up,
 )
@@ -388,6 +389,23 @@ def test_manual_xy_move_uses_direct_x_axis_by_default(monkeypatch):
     assert result["action"] == "manual_xy_move"
     assert commands == [("G21", True), ("G91", True), ("G1 X1.0 F120", True)]
     assert wait_flags == [True]
+
+
+def test_relative_xy_move_accepts_a_safe_custom_feed_rate(monkeypatch):
+    commands = []
+
+    def fake_run_grbl_commands(sequence, wait_for_idle=False, settle_delay_s=0.0, **kwargs):
+        commands.extend(sequence)
+        return [{"command": command, "wait_for_ok": wait_for_ok} for command, wait_for_ok in sequence]
+
+    monkeypatch.setattr(grbl_service, "_run_grbl_commands", fake_run_grbl_commands)
+    grbl_service._set_arm_homed_zero()
+
+    result = move_xy_relative(0.0, 0.3, "scan_clearance_forward", 50)
+
+    assert result["action"] == "scan_clearance_forward"
+    assert result["feed_rate"] == 50
+    assert commands == [("G21", True), ("G91", True), ("G1 Y0.3 F50", True)]
 
 
 def test_manual_xy_move_uses_direct_y_axis_by_default(monkeypatch):

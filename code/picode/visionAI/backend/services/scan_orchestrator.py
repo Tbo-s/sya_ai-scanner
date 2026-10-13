@@ -205,6 +205,28 @@ class ScanOrchestrator:
         await self._step(session, 24, "gate_close_wait", machine_service.wait_for_gate_done, "DOWN")
 
         await self._set_state(session, FlowState.CAPTURE_FRONT)
+        clearance_distance = max(0.0, float(os.getenv("APP_GRBL_SCAN_CLEARANCE_DISTANCE", "0.3")))
+        clearance_feed_rate = min(50, max(1, int(os.getenv("APP_GRBL_SCAN_CLEARANCE_FEED_RATE", "50"))))
+        await self._step(
+            session,
+            25,
+            "arm_clearance_forward",
+            grbl_service.move_xy_relative,
+            0.0,
+            clearance_distance,
+            "scan_clearance_forward",
+            clearance_feed_rate,
+        )
+        await self._step(
+            session,
+            26,
+            "arm_clearance_left",
+            grbl_service.move_xy_relative,
+            clearance_distance,
+            0.0,
+            "scan_clearance_left",
+            clearance_feed_rate,
+        )
         presets = {
             wrist_key: {preset["key"]: int(preset["logical"]) for preset in values}
             for wrist_key, values in get_wrist_presets().items()
@@ -231,18 +253,18 @@ class ScanOrchestrator:
                 return await asyncio.to_thread(take_pi_photo, label, session.session_id)
             return await asyncio.to_thread(take_photo, label, session.session_id)
 
-        await self._step(session, 25, "arm_x_start", grbl_service.move_axis_absolute, "X", start_x, "scan_x_start", scan_feed_rate)
-        await self._step(session, 26, "wrist1_camera", machine_service.set_wrist1, wrist1_camera)
-        await self._step(session, 27, "wrist2_horizontal", machine_service.set_wrist2, wrist2_horizontal)
-        await self._step(session, 28, "arm_y_start", grbl_service.move_axis_absolute, "Y", start_y, "scan_y_start", scan_feed_rate)
-        await self._step(session, 29, "vacuum1_on", machine_service.set_vacuum1_motor, True)
-        await self._step(session, 30, "vacuum2_on", machine_service.set_vacuum2_motor, True)
-        await self._step(session, 31, "arm_y_vacuum_off", grbl_service.move_axis_absolute, "Y", vacuum_off_y, "scan_y_vacuum_off", scan_feed_rate)
+        await self._step(session, 27, "arm_x_start", grbl_service.move_axis_absolute, "X", start_x, "scan_x_start", scan_feed_rate)
+        await self._step(session, 28, "wrist1_camera", machine_service.set_wrist1, wrist1_camera)
+        await self._step(session, 29, "wrist2_horizontal", machine_service.set_wrist2, wrist2_horizontal)
+        await self._step(session, 30, "arm_y_start", grbl_service.move_axis_absolute, "Y", start_y, "scan_y_start", scan_feed_rate)
+        await self._step(session, 31, "vacuum1_on", machine_service.set_vacuum1_motor, True)
+        await self._step(session, 32, "vacuum2_on", machine_service.set_vacuum2_motor, True)
+        await self._step(session, 33, "arm_y_vacuum_off", grbl_service.move_axis_absolute, "Y", vacuum_off_y, "scan_y_vacuum_off", scan_feed_rate)
         await asyncio.sleep(vacuum_hold_s)
-        await self._step(session, 32, "vacuum1_off", machine_service.set_vacuum1_motor, False)
-        await self._step(session, 33, "vacuum2_off", machine_service.set_vacuum2_motor, False)
-        await self._step(session, 34, "arm_z_lift", grbl_service.move_z_relative, z_lift, "scan_z_lift", scan_feed_rate)
-        await self._step(session, 35, "arm_y_photo", grbl_service.move_axis_absolute, "Y", photo_y, "scan_y_photo", scan_feed_rate)
+        await self._step(session, 34, "vacuum1_off", machine_service.set_vacuum1_motor, False)
+        await self._step(session, 35, "vacuum2_off", machine_service.set_vacuum2_motor, False)
+        await self._step(session, 36, "arm_z_lift", grbl_service.move_z_relative, z_lift, "scan_z_lift", scan_feed_rate)
+        await self._step(session, 37, "arm_y_photo", grbl_service.move_axis_absolute, "Y", photo_y, "scan_y_photo", scan_feed_rate)
 
         if camera_source == "usb":
             await asyncio.to_thread(camera_manager.start)
@@ -250,21 +272,21 @@ class ScanOrchestrator:
 
         result = await capture_scan_photo("photo_1")
         session.photo_paths.append(result["path"])
-        await self._broadcast("step_complete", 36, "photo_1", result)
+        await self._broadcast("step_complete", 38, "photo_1", result)
 
-        await self._step(session, 37, "wrist1_wall", machine_service.set_wrist1, wrist1_wall)
-        await self._step(session, 38, "arm_x_photo_2", grbl_service.move_axis_absolute, "X", second_photo_x, "scan_x_photo_2", scan_feed_rate)
+        await self._step(session, 39, "wrist1_wall", machine_service.set_wrist1, wrist1_wall)
+        await self._step(session, 40, "arm_x_photo_2", grbl_service.move_axis_absolute, "X", second_photo_x, "scan_x_photo_2", scan_feed_rate)
         result = await capture_scan_photo("photo_2")
         session.photo_paths.append(result["path"])
-        await self._broadcast("step_complete", 39, "photo_2", result)
-        await self._step(session, 40, "wrist2_vertical_left", machine_service.set_wrist2, wrist2_vertical_left)
+        await self._broadcast("step_complete", 41, "photo_2", result)
+        await self._step(session, 42, "wrist2_vertical_left", machine_service.set_wrist2, wrist2_vertical_left)
         result = await capture_scan_photo("photo_3")
         session.photo_paths.append(result["path"])
-        await self._broadcast("step_complete", 41, "photo_3", result)
-        await self._step(session, 42, "wrist2_vertical_right", machine_service.set_wrist2, wrist2_vertical_right)
+        await self._broadcast("step_complete", 43, "photo_3", result)
+        await self._step(session, 44, "wrist2_vertical_right", machine_service.set_wrist2, wrist2_vertical_right)
         result = await capture_scan_photo("photo_4")
         session.photo_paths.append(result["path"])
-        await self._broadcast("step_complete", 43, "photo_4", result)
+        await self._broadcast("step_complete", 45, "photo_4", result)
 
         session.status = "complete"
         session.state = FlowState.SHOW_PRICE

@@ -1539,8 +1539,8 @@ def _format_xy_absolute_command(target_x: float, target_y: float, feed_rate: int
     return f"G1 X{motor_x} Y{motor_y} F{feed_rate}"
 
 
-def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
-    feed_rate = _get_manual_xy_feed_rate()
+def _jog_xy(delta_x: float, delta_y: float, action: str, feed_rate: Optional[int] = None) -> dict[str, Any]:
+    active_feed_rate = max(1, int(feed_rate if feed_rate is not None else _get_manual_xy_feed_rate()))
     bounded_delta = _clamp_xy_delta_to_soft_limits(delta_x, delta_y)
     adjusted_delta_x = bounded_delta["delta_x"]
     adjusted_delta_y = bounded_delta["delta_y"]
@@ -1548,7 +1548,7 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
     if bounded_delta["skipped"]:
         return {
             "action": action,
-            "feed_rate": feed_rate,
+            "feed_rate": active_feed_rate,
             "requested_delta": {"x": delta_x, "y": delta_y},
             "applied_delta": {"x": 0.0, "y": 0.0},
             "bounded_by_soft_limit": bounded_delta["bounded"],
@@ -1566,7 +1566,7 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
         [
             ("G21", True),
             ("G91", True),
-            (_format_xy_jog_command(adjusted_delta_x, adjusted_delta_y, feed_rate), True),
+            (_format_xy_jog_command(adjusted_delta_x, adjusted_delta_y, active_feed_rate), True),
         ],
         wait_for_idle=True,
         precheck_limit_axes=limit_stop_axes,
@@ -1585,7 +1585,7 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
 
     return {
         "action": action,
-        "feed_rate": feed_rate,
+        "feed_rate": active_feed_rate,
         "requested_delta": {"x": delta_x, "y": delta_y},
         "applied_delta": {"x": adjusted_delta_x, "y": adjusted_delta_y},
         "bounded_by_soft_limit": bounded_delta["bounded"],
@@ -1596,6 +1596,10 @@ def _jog_xy(delta_x: float, delta_y: float, action: str) -> dict[str, Any]:
         "position": _status_position(None),
         "results": results,
     }
+
+
+def move_xy_relative(delta_x: float, delta_y: float, action: str, feed_rate: Optional[int] = None) -> dict[str, Any]:
+    return _jog_xy(delta_x, delta_y, action, feed_rate)
 
 
 def z_up() -> dict[str, Any]:
